@@ -1,0 +1,5 @@
+# Dossier d'Anaconda sur le serveur Linux (celui qui contient bin/python), sur une seule ligne.
+# Laisser vide : les scripts le cherchent aux emplacements habituels, puis l'écrivent ici
+# pendant l'installation (le service systemd en a besoin).
+# Exemple :
+# /opt/anaconda3

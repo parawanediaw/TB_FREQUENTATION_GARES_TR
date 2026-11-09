@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guide de déploiement</title>
+<style>
+:root {
+  --encre: #0B1F55; --texte: #22396E; --doux: #4A5F86; --fond: #F4F8FD; --carte: #FFFFFF; --trait: #E3EBF5;
+  --bordeaux: #7D142F; --bleu: #1B6EF3; --vert: #0A8F5A; --orange: #B4530B; --code: #F1F5FB;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --encre: #E8EEFA; --texte: #C9D5EA; --doux: #9DB0CF; --fond: #0E1628; --carte: #16213A; --trait: #26355A;
+    --bordeaux: #F08AA5; --bleu: #7FB0FF; --vert: #4CD39A; --orange: #F5A65B; --code: #1C2A47;
+  }
+}
+:root[data-theme="dark"] {
+  --encre: #E8EEFA; --texte: #C9D5EA; --doux: #9DB0CF; --fond: #0E1628; --carte: #16213A; --trait: #26355A;
+  --bordeaux: #F08AA5; --bleu: #7FB0FF; --vert: #4CD39A; --orange: #F5A65B; --code: #1C2A47;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--fond); color: var(--texte); font: 15px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif; }
+main { max-width: 900px; margin: 0 auto; padding: 32px 16px 64px; }
+h1 { margin: 0 0 6px; color: var(--encre); font-size: 28px; line-height: 1.2; letter-spacing: -.01em; }
+h2 { margin: 40px 0 12px; color: var(--encre); font-size: 20px; letter-spacing: -.005em; }
+h3 { margin: 24px 0 8px; color: var(--encre); font-size: 16px; }
+p, li { max-width: 72ch; }
+a { color: var(--bleu); }
+.chapeau { color: var(--doux); margin: 0 0 24px; }
+.carte { background: var(--carte); border: 1px solid var(--trait); border-radius: 12px; padding: 18px 20px; margin: 14px 0; }
+.etape { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 14px; }
+.num { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--bordeaux); color: #fff; font-weight: 800; }
+.etape h3 { margin-top: 4px; }
+.ou { display: inline-block; padding: 1px 9px; border-radius: 9px; font-size: 12px; font-weight: 700; color: #fff; background: var(--bleu); vertical-align: 2px; }
+.ou.srv { background: var(--bordeaux); }
+code { font: 13px/1.5 Consolas, "Cascadia Mono", ui-monospace, monospace; background: var(--code); padding: 1px 5px; border-radius: 4px;
+  color: var(--encre); overflow-wrap: anywhere; }
+pre { background: var(--code); border-radius: 8px; padding: 12px 14px; overflow-x: auto; margin: 10px 0; }
+pre code { padding: 0; background: none; overflow-wrap: normal; white-space: pre; }
+.etape > div { min-width: 0; }
+.note { border-left: 3px solid var(--bleu); padding: 8px 14px; background: var(--carte); border-radius: 0 8px 8px 0; margin: 12px 0; }
+.note.alerte { border-color: var(--orange); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.tableau { overflow-x: auto; background: var(--carte); border: 1px solid var(--trait); border-radius: 12px; margin: 14px 0; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--trait); }
+th { color: var(--encre); font-size: 13px; background: var(--code); }
+tr:last-child td { border-bottom: 0; }
+dt { color: var(--encre); font-weight: 700; margin-top: 10px; }
+dd { margin: 2px 0 0 0; }
+.arbo { font: 13px/1.7 Consolas, ui-monospace, monospace; }
+.arbo span { color: var(--doux); font-family: "Segoe UI", system-ui, sans-serif; }
+@media print { body { background: #fff; } .carte, .tableau { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Tableau de bord « Fréquentation des gares »</h1>
+<p class="chapeau">Guide de déploiement sur un serveur Windows ou Linux sans accès Internet, avec les validations lues dans SQL Server.</p>
+
+<div class="carte">
+  <strong>En bref.</strong> Le tableau de bord est une application <strong>Streamlit</strong> (un outil Python qui affiche une page web).
+  Il lit les validations de <code>Validations_load_30mn</code>, la liste des gares de <code>Ref_Gares</code> et les prévisions de
+  <code>validations_horaires_forecast</code>. Les postes de l'entreprise l'ouvrent dans leur navigateur, à l'adresse
+  <code>http://NOM_DU_SERVEUR:8501</code>. L'installation se fait en 5 étapes : la première sur un PC qui a Internet, les autres sur le serveur.
+</div>
+
+<h2>Avant de commencer</h2>
+<dl>
+  <dt>Anaconda, sur le PC et sur le serveur</dt>
+  <dd>Les scripts utilisent le Python d'<strong>Anaconda</strong> (la distribution Python installée sur les deux machines). Ils le cherchent
+  tout seuls aux emplacements habituels (<code>C:\ProgramData\anaconda3</code>, <code>C:\Users\…\anaconda3</code>, <code>C:\anaconda3</code>…).
+  S'il est ailleurs, écrire son dossier (celui qui contient <code>python.exe</code>) dans <code>outils\chemin_anaconda.txt</code>.
+  Sur le serveur, l'étape 2 y enregistre le dossier trouvé : le démarrage automatique, qui tourne avec le compte Windows SYSTEM, en a besoin.
+  L'application s'installe dans son propre environnement (<code>.venv</code>) : l'environnement de base d'Anaconda n'est pas modifié.
+  Pour connaître la version de Python du serveur : <code>python --version</code> dans « Anaconda Prompt ».</dd>
+  <dt>Sur le serveur : le pilote ODBC pour SQL Server</dt>
+  <dd>Le <strong>pilote ODBC</strong> est le composant Windows qui permet à un programme de dialoguer avec SQL Server.
+  Il est sans doute déjà là si des traitements Python tournent sur ce serveur. Pour le vérifier : menu Démarrer,
+  « Sources de données ODBC (64 bits) », onglet <em>Pilotes</em> : chercher <em>ODBC Driver 17 for SQL Server</em> (ou 18).
+  Sinon, télécharger « Microsoft ODBC Driver for SQL Server » depuis le PC qui a Internet et l'installer.</dd>
+  <dt>Un compte SQL Server en lecture</dt>
+  <dd>Un identifiant et un mot de passe SQL qui peuvent lire les trois tables. Un compte réservé au tableau de bord, en lecture seule, est préférable.</dd>
+  <dt>Le port 8501 joignable depuis les postes</dt>
+  <dd>Un <strong>port</strong> est le numéro de « porte » réseau sur laquelle le tableau de bord répond. L'étape 5 l'ouvre dans le
+  pare-feu Windows du serveur ; si un pare-feu réseau sépare les postes du serveur, demander son ouverture à l'équipe réseau.</dd>
+</dl>
+
+<h2>Les 5 étapes</h2>
+
+<div class="carte etape"><div class="num">1</div><div>
+  <h3>Préparer le paquet <span class="ou">PC avec Internet</span></h3>
+  <p>Sur un PC Windows qui a Internet et Anaconda, double-cliquer sur <code>scripts\1_preparer_sur_un_pc_avec_internet.bat</code>.
+  Le script demande la version de Python <strong>du serveur</strong> (par exemple <code>3.12</code>), puis télécharge :</p>
+  <ul>
+    <li>les <strong>paquets Python</strong> (les bibliothèques dont l'application a besoin) dans le dossier <code>paquets\</code> ;</li>
+    <li>la police de caractères et la bibliothèque de carte dans le dossier <code>static\</code>, pour que l'affichage ne dépende pas d'Internet.</li>
+  </ul>
+  <p>Derrière un proxy d'entreprise (un intermédiaire obligatoire vers Internet), taper d'abord
+  <code>set HTTPS_PROXY=http://adresse-du-proxy:port</code> dans l'invite de commandes, puis lancer le script depuis cette même fenêtre.</p>
+</div></div>
+
+<div class="carte etape"><div class="num">2</div><div>
+  <h3>Installer sur le serveur <span class="ou srv">Serveur</span></h3>
+  <p>Copier <strong>tout le dossier</strong> sur le serveur, par exemple dans <code>D:\Applications\frequentation_gares</code>,
+  puis double-cliquer sur <code>scripts\2_installer_sur_le_serveur.bat</code>. Le script :</p>
+  <ol>
+    <li>crée l'<strong>environnement Python</strong> <code>.venv</code> : un dossier qui contient les paquets de l'application, isolé du reste du serveur ;</li>
+    <li>installe les paquets depuis <code>paquets\</code>, sans Internet ;</li>
+    <li>crée <code>.streamlit\secrets.toml</code> et l'ouvre dans le Bloc-notes : y saisir les identifiants des deux serveurs SQL (section <code>[sqlserver]</code> pour les validations, section <code>[sqlserver_previsions]</code> pour les prévisions), enregistrer, fermer ;</li>
+    <li>lance la vérification (voir étape 3).</li>
+  </ol>
+  <div class="note alerte"><code>secrets.toml</code> contient un mot de passe : ne jamais l'envoyer par mail ni le copier ailleurs.</div>
+</div></div>
+
+<div class="carte etape"><div class="num">3</div><div>
+  <h3>Adapter les requêtes SQL, puis vérifier <span class="ou srv">Serveur</span></h3>
+  <p>Le dossier <code>sql\</code> contient trois requêtes qui décrivent les tables. C'est <strong>le seul endroit</strong> où figurent
+  des noms de colonnes : les lignes marquées <code>-- À ADAPTER</code> sont des exemples à remplacer par les vrais noms.</p>
+  <div class="tableau"><table>
+    <tr><th>Fichier</th><th>Colonnes à renvoyer (avec exactement ces noms, grâce à <code>AS</code>)</th></tr>
+    <tr><td><code>1_validations.sql</code></td><td><code>date_heure</code> (date et heure de la validation), <code>gare</code> (nom de la gare),
+      <code>sens</code> (<code>'E'</code> entrée ou <code>'S'</code> sortie), <code>nb</code> (1 par validation). Ne garder que les validations à l'état « ok ».</td></tr>
+    <tr><td><code>2_previsions.sql</code></td><td><code>date_heure</code> (début de l'heure prévue), <code>gare</code>, <code>sens</code>, <code>nb</code> (nombre prévu) ;
+      facultatif : <code>nb_bas</code> et <code>nb_haut</code> pour dessiner une bande d'incertitude autour de la courbe.</td></tr>
+    <tr><td><code>3_gares.sql</code></td><td><code>gare</code> ; facultatif : <code>ordre</code> (position sur la ligne), <code>zone</code>, <code>latitude</code>, <code>longitude</code>.</td></tr>
+  </table></div>
+  <p>Pour voir les colonnes réelles des tables :</p>
+  <pre><code>.venv\Scripts\python.exe verifier_installation.py --colonnes</code></pre>
+  <p>Après chaque correction, relancer la vérification. Elle contrôle la connexion, puis chaque requête (colonnes, entrées et sorties
+  bien distinguées, gares inconnues, durée, couverture des prévisions) et dit précisément quoi corriger :</p>
+  <pre><code>.venv\Scripts\python.exe verifier_installation.py</code></pre>
+  <div class="note">Astuce : chaque requête se teste aussi telle quelle dans SSMS (ajouter <code>TOP 100</code> après <code>SELECT</code>).
+  Deux règles pour les fichiers 1 et 2 : une seule instruction <code>SELECT</code>, sans <code>ORDER BY</code> ; et pas de filtre sur les dates,
+  l'application l'ajoute elle-même.</div>
+</div></div>
+
+<div class="carte etape"><div class="num">4</div><div>
+  <h3>Essayer <span class="ou srv">Serveur</span></h3>
+  <p>Double-cliquer sur <code>scripts\3_lancer.bat</code>, puis ouvrir <code>http://localhost:8501</code> sur le serveur, ou
+  <code>http://NOM_DU_SERVEUR:8501</code> depuis un poste. Fermer la fenêtre noire arrête le tableau de bord.</p>
+</div></div>
+
+<div class="carte etape"><div class="num">5</div><div>
+  <h3>Mettre en service <span class="ou srv">Serveur</span></h3>
+  <p>Clic droit sur <code>scripts\4_demarrage_automatique.bat</code>, puis <em>Exécuter en tant qu'administrateur</em>. Le script :</p>
+  <ul>
+    <li>crée la <strong>tâche planifiée</strong> « Frequentation des gares » (un programme lancé automatiquement par Windows) : le tableau de bord
+      démarre avec le serveur, tourne en arrière-plan et repart tout seul s'il s'arrête ;</li>
+    <li>ouvre le port 8501 dans le <strong>pare-feu</strong> Windows (le filtre qui autorise ou bloque les connexions réseau) ;</li>
+    <li>démarre le tableau de bord. Son journal (la trace de son fonctionnement) est dans <code>logs\streamlit.log</code>.</li>
+  </ul>
+  <p>Pour l'arrêter : <code>scripts\5_arreter.bat</code> (en administrateur).
+  Pour supprimer la tâche : <code>schtasks /delete /tn "Frequentation des gares" /f</code>.</p>
+</div></div>
+
+<h2>Sur un serveur Linux</h2>
+<p>Même principe, avec les scripts du dossier <code>scripts_linux/</code> (à lancer dans un terminal). Différences avec Windows :</p>
+<div class="tableau"><table>
+  <tr><th>Étape</th><th>Linux</th></tr>
+  <tr><td>Avant de commencer</td><td>Anaconda installé sur le serveur (dossier écrit dans <code>outils/chemin_anaconda_linux.txt</code> s'il n'est pas à un emplacement habituel).
+    Le <strong>pilote Microsoft ODBC pour SQL Server</strong> et <strong>unixODBC</strong> (la couche ODBC de Linux) doivent être installés
+    par l'administrateur du serveur : paquets <code>msodbcsql18</code> et <code>unixODBC</code>, téléchargés depuis le site de Microsoft sur une machine qui a Internet.
+    Dans <code>secrets.toml</code>, écrire alors <code>pilote = 'ODBC Driver 18 for SQL Server'</code>.</td></tr>
+  <tr><td>1. Préparer</td><td>Sur ton PC Windows : <code>scripts\1_preparer_sur_un_pc_avec_internet.bat 3.12 linux</code> (3.12 = version de Python du serveur).
+    Les paquets pour Linux vont dans <code>paquets_linux/</code>. Depuis une machine Linux : <code>scripts_linux/1_preparer_sur_un_pc_avec_internet.sh 3.12</code>.</td></tr>
+  <tr><td>2. Installer</td><td>Copier le dossier sur le serveur, de préférence dans un chemin <strong>sans espace</strong> (par exemple <code>/opt/frequentation_gares</code>),
+    puis <code>bash scripts_linux/2_installer_sur_le_serveur.sh</code>. Au premier passage, le script crée <code>.streamlit/secrets.toml</code> :
+    le remplir (<code>nano .streamlit/secrets.toml</code>) puis relancer le script, qui fait alors la vérification.</td></tr>
+  <tr><td>3. Essayer</td><td><code>bash scripts_linux/3_lancer.sh</code>, puis <code>http://NOM_DU_SERVEUR:8501</code>. Ctrl+C arrête.</td></tr>
+  <tr><td>4. Mettre en service</td><td><code>sudo bash scripts_linux/4_demarrage_automatique.sh</code> : crée le <strong>service systemd</strong>
+    <code>frequentation-gares</code> (l'équivalent Linux de la tâche planifiée : démarrage avec le serveur, relance automatique)
+    et ouvre le port 8501 dans le pare-feu (firewalld ou ufw). Journal : <code>journalctl -u frequentation-gares -f</code>.</td></tr>
+  <tr><td>Arrêter</td><td><code>bash scripts_linux/5_arreter.sh</code></td></tr>
+</table></div>
+
+<h2>Réglages courants : <code>parametres.toml</code></h2>
+<p>Ce fichier s'ouvre avec le Bloc-notes. Après une modification, recharger la page dans le navigateur (touche F5).</p>
+<div class="tableau"><table>
+  <tr><th>Réglage</th><th>Rôle</th></tr>
+  <tr><td><code>mode</code></td><td><code>"reel"</code> : vraies données SQL Server. <code>"demo"</code> : chiffres simulés, sans base, pour tester l'affichage.</td></tr>
+  <tr><td><code>afficher_pages_simulees</code></td><td>Affiche les pages « Suivi des trains » et « Serpent de charge » (horaires GTFS théoriques, retards simulés : ce n'est pas du GTFS-Realtime). L'écran TV n'est plus proposé.</td></tr>
+  <tr><td><code>[joj] objectif</code></td><td>Objectif de voyageurs cumulés sur les Jeux. À 0, le résumé JOJ affiche la projection de fin des Jeux à la place.</td></tr>
+  <tr><td><code>[exploitation]</code></td><td>Parc de rames, places par rame (pour le taux de charge) et retard simulé maximal. <strong>À confirmer.</strong></td></tr>
+  <tr><td><code>[horaires] normaux</code></td><td>Ouverture et fermeture du service, du lundi au dimanche. <strong>À vérifier</strong> : elles servent au « cumul depuis l'ouverture » et à la mention « Service fermé ».</td></tr>
+  <tr><td><code>[joj]</code></td><td>Dates et horaires des JOJ Dakar 2026 ; <code>afficher = false</code> retire le bloc après les Jeux.</td></tr>
+  <tr><td><code>[zones]</code></td><td>Regroupement des gares pour le filtre en haut de page, par exemple <code>"Zone Dakar" = ["Dakar", "Colobane"]</code>.</td></tr>
+  <tr><td><code>alerte_retard_minutes</code></td><td>Délai sans nouvelle validation au-delà duquel l'en-tête passe en orange « Données en retard » (45 min par défaut, les validations arrivant toutes les 30 min).</td></tr>
+  <tr><td><code>semaines_reference</code></td><td>Nombre de semaines qui servent de référence « habituelle » (4 par défaut).</td></tr>
+</table></div>
+
+<h2>GTFS théorique et simulation des trains</h2>
+<p>La requête <code>sql/4_gtfs_horaires.sql</code> lit les services actifs dans <code>calendar</code>, les circulations dans <code>trip</code>, les lignes dans <code>route</code>, les arrêts et horaires dans <code>stop</code> et <code>stop_time</code>. Les pages Suivi, Serpent de charge et Écran TV sont activées. Les positions et retards sont simulés à partir des horaires ; aucune source GPS ou GTFS-RT n'est branchée.</p>
+<p>Si les tables GTFS sont sur un autre serveur, ajouter la section <code>[sqlserver_gtfs]</code> dans <code>.streamlit/secrets.toml</code> (un exemple figure dans <code>.streamlit/secrets.toml.exemple</code>). Adapter les noms de colonnes dans <code>sql/4_gtfs_horaires.sql</code> si le schéma importé diffère du standard GTFS.</p>
+
+<h2>Comment les chiffres sont calculés</h2>
+<ul>
+  <li><strong>Heure de référence</strong> : les validations arrivent par lots toutes les 30 minutes. Les indicateurs de fréquentation sont donc calculés
+    jusqu'à la <strong>dernière validation reçue</strong>, affichée dans l'en-tête ; les comparaisons « à la même heure » se font à cette heure-là.</li>
+  <li><strong>vs. hier à la même heure</strong> : cumul d'aujourd'hui comparé au cumul d'hier arrêté à la même heure.</li>
+  <li><strong>vs. semaine habituelle</strong> : passages des 60 dernières minutes, comparés aux mêmes 60 minutes des mêmes jours, les 4 semaines précédentes
+    (une semaine sans aucune donnée est écartée de la moyenne).</li>
+  <li><strong>Affluence habituelle</strong> : moyenne par jour de la semaine et par heure sur les 4 dernières semaines.</li>
+  <li><strong>JOJ</strong> : réel pour les jours terminés ; pour aujourd'hui, réel jusqu'à la dernière validation plus la prévision du reste de la journée ;
+    ensuite, la prévision. La « période normale » est la moyenne, par jour de la semaine, des 4 semaines avant les Jeux.</li>
+  <li><strong>Prévision</strong> : les valeurs de <code>validations_horaires_forecast</code>, telles quelles.</li>
+  <li><strong>Aucun chiffre inventé</strong> : en mode réel, si une donnée ne peut pas être lue, le bloc concerné affiche l'erreur exacte au lieu de chiffres simulés.</li>
+</ul>
+
+<h2>En cas de problème</h2>
+<div class="tableau"><table>
+  <tr><th>Ce que l'on voit</th><th>Cause probable</th><th>Solution</th></tr>
+  <tr><td>Installation : « No matching distribution found »</td><td>La version de Python choisie à l'étape 1 n'est pas celle du serveur.</td>
+    <td>Relancer l'étape 1 avec la bonne version (<code>python --version</code> sur le serveur), recopier <code>paquets\</code>, relancer l'étape 2.</td></tr>
+  <tr><td>« Anaconda introuvable »</td><td>Anaconda est installé dans un dossier inhabituel.</td>
+    <td>Écrire son dossier (celui qui contient <code>python.exe</code>) dans <code>outils\chemin_anaconda.txt</code>.</td></tr>
+  <tr><td>« DLL load failed » au lancement</td><td>Composants Microsoft Visual C++ absents du serveur.</td>
+    <td>Installer « Microsoft Visual C++ Redistributable » x64 (téléchargé depuis le PC qui a Internet).</td></tr>
+  <tr><td>« Connexion à SQL Server impossible »</td><td>Nom du serveur, identifiants ou pilote incorrects ; réseau fermé entre les deux serveurs.</td>
+    <td>Corriger <code>.streamlit\secrets.toml</code> ; le message affiche la liste des pilotes présents.</td></tr>
+  <tr><td>« Invalid column name … »</td><td>Un nom de colonne d'exemple n'a pas été adapté.</td>
+    <td>Corriger le fichier du dossier <code>sql\</code> indiqué, à l'aide de <code>verifier_installation.py --colonnes</code>.</td></tr>
+  <tr><td>En-tête orange « Données en retard »</td><td>Plus aucune validation n'arrive : le chargement toutes les 30 min (<code>job_validations_sales_30mn</code>) est arrêté ou en échec.</td>
+    <td>Vérifier ce traitement ; le tableau de bord reprend tout seul dès l'arrivée de nouvelles validations.</td></tr>
+  <tr><td>« Aucune prévision »</td><td>La table des prévisions ne couvre pas les prochaines 24 heures.</td>
+    <td>Vérifier la dernière exécution du modèle de prévision et <code>sql\2_previsions.sql</code>.</td></tr>
+  <tr><td>Toutes les entrées, aucune sortie (ou l'inverse)</td><td>La valeur qui désigne une sortie (ou une entrée) n'est pas la bonne dans le <code>CASE</code>.</td>
+    <td>Corriger les valeurs <code>'entree'</code> / <code>'sortie'</code> dans <code>sql\1_validations.sql</code>.</td></tr>
+  <tr><td>Page lente</td><td>Pas d'<strong>index</strong> (une table de recherche qui évite de relire toute la table) sur la colonne date-heure des validations.</td>
+    <td>Demander un index sur cette colonne à l'administrateur de la base.</td></tr>
+  <tr><td>Page injoignable depuis les postes</td><td>Tâche arrêtée, ou port 8501 bloqué par un pare-feu.</td>
+    <td>Ouvrir <code>http://localhost:8501</code> sur le serveur ; lire <code>logs\streamlit.log</code> ; faire ouvrir le port côté réseau.</td></tr>
+</table></div>
+
+<h2>Mettre à jour l'application</h2>
+<ol>
+  <li>Arrêter : <code>scripts\5_arreter.bat</code> (en administrateur).</li>
+  <li>Remplacer les fichiers de l'application, en <strong>gardant</strong> <code>.streamlit\secrets.toml</code>, <code>parametres.toml</code> et le dossier <code>sql\</code>.</li>
+  <li>Redémarrer : <code>schtasks /run /tn "Frequentation des gares"</code> (ou redémarrer le serveur).</li>
+</ol>
+
+<h2>Contenu du dossier</h2>
+<div class="carte arbo">
+app.py <span>— l'application (pages et affichage)</span><br>
+donnees.py <span>— lecture des données : SQL Server (mode réel) ou chiffres simulés (mode démonstration)</span><br>
+parametres.py <span>— lecture des réglages</span><br>
+parametres.toml <span>— les réglages (mode, horaires, JOJ, zones)</span><br>
+verifier_installation.py <span>— vérification de la connexion et des requêtes</span><br>
+requirements.txt <span>— liste des paquets Python</span><br>
+sql\ <span>— les trois requêtes qui décrivent les tables (à adapter)</span><br>
+.streamlit\config.toml <span>— réglages du serveur web (port 8501, thème)</span><br>
+.streamlit\secrets.toml.exemple <span>— modèle du fichier des identifiants SQL Server</span><br>
+scripts\ <span>— les 5 étapes de l'installation</span><br>
+outils\ <span>— utilitaires appelés par les scripts (tâche planifiée, téléchargements, relance automatique)</span><br>
+assets\ <span>— logos et images</span><br>
+static\ <span>— police et carte, remplis par l'étape 1</span><br>
+scripts_linux/ <span>— les mêmes étapes pour un serveur Linux</span><br>
+paquets\, paquets_linux/, .venv\, logs\ <span>— créés pendant l'installation</span>
+</div>
+
+</main>
+</body>
+</html>

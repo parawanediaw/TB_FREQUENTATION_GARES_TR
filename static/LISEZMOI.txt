@@ -1,0 +1,4 @@
+Ce dossier est rempli par scripts\1_preparer_sur_un_pc_avec_internet.bat :
+  polices\  police de caractères Plus Jakarta Sans
+  leaflet\  bibliothèque de carte Leaflet 1.9.4
+L'application les sert elle-même, sans accès Internet. S'ils sont absents, les postes les chargent depuis Internet.

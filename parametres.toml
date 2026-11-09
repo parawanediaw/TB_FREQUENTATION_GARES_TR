@@ -1,0 +1,75 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Tableau de bord « Fréquentation des gares » : réglages
+# ═══════════════════════════════════════════════════════════════════════════
+#  Après une modification : recharger la page dans le navigateur (touche F5).
+#  Les identifiants SQL Server ne vont PAS ici : ils vont dans .streamlit/secrets.toml.
+#  Les requêtes SQL sont dans le dossier sql/.
+
+[application]
+# "reel" : lit les validations dans SQL Server (requêtes du dossier sql/).
+# "demo" : chiffres simulés, sans base de données, pour tester l'affichage.
+mode = "reel"
+
+# Pages « Suivi des trains », « Serpent de charge » et « JOJ » : affichées.
+# (L'écran TV reste désactivé.)
+afficher_pages_simulees = true
+
+# Rafraîchissement automatique de la page, en secondes (15 au minimum).
+rafraichissement_secondes = 60  # animation GTFS simulée ; les validations, elles, arrivent toutes les 30 min
+
+# Pendant les heures de service, la page signale des « données en retard »
+# si aucune nouvelle validation n'est arrivée depuis ce nombre de minutes.
+# Les validations arrivent toutes les 30 minutes : 45 laisse une marge par rapport à la livraison toutes les 30 min.
+alerte_retard_minutes = 45
+
+# Décalage de l'heure locale par rapport à l'heure universelle (Dakar : 0).
+decalage_utc_heures = 0
+
+[historique]
+# Nombre de semaines qui servent de référence « habituelle »
+# (comparaisons « vs. semaine habituelle », carte de chaleur, période normale des JOJ).
+semaines_reference = 4
+
+[horaires]
+# Heures d'ouverture et de fermeture du service, du lundi au dimanche (24 = minuit).
+# À VÉRIFIER avec les horaires réels.
+normaux = [[5, 23], [5, 23], [5, 23], [5, 23], [5, 23], [5, 23], [6, 22]]
+
+[joj]
+# Bloc « JOJ Dakar 2026 » de la page Fréquentation. Mettre false pour le retirer.
+afficher = true
+debut = 2026-10-31
+fin = 2026-11-13
+# Horaires pendant les Jeux, tous les jours (24 = minuit).
+horaires = [5, 24]
+# Objectif de voyageurs (entrées) cumulés sur toute la durée des Jeux. 0 = pas d'objectif :
+# la page affiche alors la projection de fin des Jeux.
+objectif = 0
+
+[exploitation]
+# Pages « Suivi des trains » et « Serpent de charge » : horaires GTFS théoriques, retards simulés.
+parc_rames = 8             # rames disponibles (À CONFIRMER)
+capacite_rame = 568        # places par rame, assises + debout (À CONFIRMER)
+retard_simule_max = 4      # retard simulé maximal, en minutes (0 = trains toujours à l'heure)
+
+[zones]
+# Regroupement des gares par zone, pour le filtre en haut de la page.
+# Écrire les noms de gares exactement comme dans sql/3_gares.sql.
+# Sans zone définie ici (ni colonne « zone » dans sql/3_gares.sql),
+# le filtre propose « Toutes les gares » puis chaque gare.
+# Exemples :
+# "Zone Dakar"    = ["Dakar", "Colobane", "Hann"]
+# "Zone Pikine"   = ["Pikine", "Thiaroye"]
+
+[base]
+# true : les requêtes n'attendent pas la fin d'un chargement en cours dans la table
+#        (lecture « sans verrou »). Un chargement interrompu peut alors apparaître
+#        une minute avant d'être complet.
+# false : les requêtes attendent la fin de chaque chargement (affichage parfois plus lent).
+lecture_non_bloquante = true
+
+[securite]
+# false (production) : en cas d'erreur, l'écran affiche un message neutre ; le détail technique
+#        (nom de serveur, de table, message SQL) est écrit seulement dans logs\streamlit.log.
+# true  : le détail est aussi affiché à l'écran (à réserver aux essais).
+afficher_details_erreurs = false

@@ -1,0 +1,6 @@
+# Dossier d'Anaconda : celui qui contient python.exe (et non son sous-dossier Scripts),
+# sur une seule ligne, sans guillemets.
+# Laisser vide : les scripts le cherchent aux emplacements habituels, puis l'ecrivent ici
+# pendant l'installation (necessaire au demarrage automatique, qui tourne avec le compte SYSTEM).
+# Exemple :
+# C:\ProgramData\anaconda3

@@ -1,0 +1,34 @@
+# Reglages du serveur Streamlit (production)
+
+[server]
+port = 8501                 # meme port que proxy_pass dans securite/nginx_frequentation.conf
+address = "127.0.0.1"       # joignable SEULEMENT par le proxy nginx (HTTPS) ; "0.0.0.0" = acces direct sans proxy
+headless = true             # n'ouvre pas de navigateur sur le serveur
+enableStaticServing = true  # sert le dossier static/ (polices et carte, sans Internet)
+fileWatcherType = "none"    # pas de rechargement automatique quand un fichier .py change
+runOnSave = false
+maxUploadSize = 1           # aucun envoi de fichier n'est prevu (lecture seule)
+maxMessageSize = 50         # taille maximale d'un message navigateur <-> serveur (Mo)
+enableXsrfProtection = true # jeton anti-falsification de requete (XSRF/CSRF)
+enableCORS = true           # refuse les appels venant d'un autre site (CORS)
+
+# Derriere un proxy HTTPS (dossier securite/) : remplacer address par "127.0.0.1"
+# pour que Streamlit ne soit joignable QUE par le proxy, jamais en direct.
+
+[browser]
+gatherUsageStats = false    # aucune statistique envoyee a l'exterieur
+
+[client]
+toolbarMode = "viewer"      # menu reduit : pas de "Rerun", "Settings", "Clear cache"
+showErrorDetails = "none"   # aucune trace Python affichee dans le navigateur
+showSidebarNavigation = false
+
+[logger]
+level = "info"
+
+[theme]
+base = "light"
+primaryColor = "#1B6EF3"
+backgroundColor = "#F4F8FD"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#0B1F55"

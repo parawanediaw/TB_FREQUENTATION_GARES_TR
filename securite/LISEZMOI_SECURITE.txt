@@ -1,0 +1,27 @@
+BRIQUE DE SECURITE - tableau de bord en lecture seule, sans identification (serveur Linux)
+
+Deja actif dans l'application :
+ - Requetes SQL controlees : tout mot d'ecriture (INSERT, UPDATE, DELETE, DROP, EXEC, xp_...) bloque la requete.
+   Connexion ouverte en "ApplicationIntent=ReadOnly", compte SQL tdb_lecture (droit SELECT seulement).
+ - Erreurs : message neutre a l'ecran ; detail dans le journal : journalctl -u frequentation-gares
+ - Noms de gares et de trains echappes avant affichage (protection contre l'injection de code, XSS).
+ - .streamlit/config.toml : Streamlit n'ecoute que sur 127.0.0.1 (joignable seulement par nginx),
+   protection XSRF, CORS, aucune trace Python dans le navigateur, menu reduit, pas d'envoi de fichier.
+ - Service systemd durci (scripts_linux/4_demarrage_automatique.sh) : compte non root, pas d'elevation
+   de droits, systeme en lecture seule ; secrets.toml en chmod 600 ; port 8501 ferme au pare-feu, 80/443 ouverts.
+
+A faire par l'equipe systeme :
+ 1. Installer nginx (paquet hors ligne) et le pilote ODBC Microsoft (msodbcsql18 + unixODBC).
+ 2. Certificat HTTPS au nom DNS du tableau de bord (autorite interne) :
+      /etc/ssl/tdb/tdb.crt  et  /etc/ssl/tdb/tdb.key  (chmod 600 sur la cle)
+ 3. Copier nginx_frequentation.conf dans /etc/nginx/conf.d/ ; adapter server_name (2 endroits)
+    et les chemins du certificat ; nginx -t ; systemctl enable --now nginx (ou reload).
+    nginx < 1.25 : remplacer "listen 443 ssl;" + "http2 on;" par "listen 443 ssl http2;".
+    SELinux actif : setsebool -P httpd_can_network_connect 1
+ 4. Flux sortants vers les 3 serveurs SQL Server (port 1433 en general).
+
+Recette :
+ - curl -s http://127.0.0.1:8501/_stcore/health  -> ok   (sur le serveur)
+ - https://NOM_DNS/ s'ouvre avec le cadenas ; les chiffres se mettent a jour tout seuls (WebSocket)
+ - http://SERVEUR:8501 depuis un autre poste -> ne repond pas
+ - curl -skI https://NOM_DNS/ | grep -iE "strict-transport|content-security|x-frame"  -> 3 lignes
