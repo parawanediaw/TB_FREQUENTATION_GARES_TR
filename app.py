@@ -52,6 +52,7 @@ st.set_page_config(
 ASSETS = Path(__file__).parent / "assets"
 STATIC = Path(__file__).parent / "static"
 RAFRAICHISSEMENT = f"{PARAM.rafraichissement_secondes if REEL else 30}s"  # rafraîchissement automatique de la page
+TV_ROTATION = 20  # écran TV : secondes entre les 2 vues (1 : gares et JOJ ; 2 : top 5, prévision, charge)
 ACCELERATION = 1 if REEL else 10  # démonstration : trains 10 × plus rapides ; mode réel : horaires GTFS, temps réel
 
 # Polices et carte servies par l'application (dossier static/) quand elles y sont : aucun accès Internet
@@ -2587,12 +2588,7 @@ def html_montees(ch: dict) -> str:
             '<div class="tb-md tb-md-t"><span></span><span>Montées</span><span>Descentes</span></div>' + rangs + '</div>')
 
 
-# — Écran TV (serpent de charge) —
-LEG_TV = ('<span><i style="background:#fff;border:3px solid #0D3A86"></i>Gare</span>'
-          '<span><i style="background:#05B877"></i>Train à l\'heure</span><span><i style="background:#7D142F"></i>Train en retard</span>'
-          '<span>Charge des voies <b style="display:inline-block;width:110px;height:10px;border-radius:5px;'
-          'background:linear-gradient(90deg,#2AA5E0,#22B07D,#F5A524,#F2711C,#7D142F)"></b></span>')
-
+# — Écran TV (fréquentation en grand, pour les écrans muraux) —
 CSS_TV = r"""
 .block-container, [data-testid="stMainBlockContainer"] { padding: 0 18px 16px !important; }
 .st-key-quitter_tv { position: fixed !important; right: 14px; bottom: 12px; z-index: 1001; width: auto !important; opacity: .55; transition: opacity .15s; }
@@ -2646,69 +2642,43 @@ CSS_TV = r"""
   .tv-sg { grid-template-columns: 120px repeat(5, minmax(0, 1fr)); } .tv-sg .c b { font-size: 17px; } .tv-ech { display: none; }
 }
 @media (max-width: 1000px) { .tv-live, .tv-joj { display: none; } }
+.tv-z { margin-top: 14px; }
+.tv-pager { flex: none; display: flex; flex-direction: column; gap: 8px; }
+.tv-pager i { width: 10px; height: 10px; border-radius: 50%; background: rgba(255, 255, 255, .3); }
+.tv-pager i.on { background: #fff; }
+.tv-z > * + * { margin-top: 10px; }
+.tv-g2 { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) minmax(0, 1.32fr); align-items: start; }
+@media (min-width: 1800px) { .tv-z { zoom: 1.18; } }
+@media (max-width: 1200px) { .tv-g2 { grid-template-columns: minmax(0, 1fr); } }
 """
 
 
-def html_tv_entete(maj: datetime) -> str:
+def html_tv_entete(maj: datetime, etat: tuple[str, str] | None = None, vue: int | None = None) -> str:
+    """Bandeau de l'écran TV ; « etat » = (libellé, couleur) de la fraîcheur des données, comme sur la page Fréquentation."""
+    libelle, coul = etat or ("En direct", VERT_OK)
+    coul = "#FF8FA3" if coul == ROUGE else coul  # pastille rouge lisible sur le bandeau bordeaux
     return f"""
 <div class="tv-h">
   {_img_tag("logo_seter.png", "seter")}
-  <div class="tv-t"><b>Serpent de charge</b><span>TER Dakar ↔ AIBD · positions simulées depuis le GTFS</span></div>
-  <div class="tv-live"><i></i>EN DIRECT</div>
+  <div class="tv-t"><b>Fréquentation des gares</b><span>TER Dakar ↔ AIBD · entrées et sorties · données en temps réel</span></div>
+  <div class="tv-live"><i style="background:{coul};box-shadow:0 0 0 4px {coul}4D"></i>{esc(libelle)}</div>
   <div class="tv-joj">JOJ Dakar 2026 · {statut_joj(maj.date())}</div>
   <div class="tv-clock"><b>{maj:%H:%M}</b><span>{date_fr(maj)}</span></div>
+  {"" if vue is None else '<div class="tv-pager">' + "".join(f'<i class="{"on" if k == vue else ""}"></i>' for k in (0, 1)) + "</div>"}
   {_img_tag("embleme_dakar2026.png", "joj")}
-</div>"""
-
-
-def html_tv_kpis(trains: list[dict], charges: dict, ch: dict) -> str:
-    n = len(trains)
-    bord = sum(charges[t["id"]][0] for t in trains)
-    taux = bord / (n * CAPACITE_RAME) * 100 if n else 0
-    segs = ([(f"{NOMS[i]} → {NOMS[i + 1]}", ch["pct_a"][i], ch["aller"][i]) for i in range(len(NOMS) - 1)]
-            + [(f"{NOMS[i + 1]} → {NOMS[i]}", ch["pct_r"][i], ch["retour"][i]) for i in range(len(NOMS) - 1)])
-    nom, p, f = max(segs, key=lambda x: x[1])
-    retard = sum(t["ecart"] > 0 for t in trains)
-    return f"""
-<div class="tv-k">
-  <div class="tv-kt"><small>Voyageurs à bord (estimés)</small><b>{nb(bord)}</b><span>dans {n} trains en ligne</span></div>
-  <div class="tv-kt"><small>Taux de charge moyen</small><b>{round(taux)} %</b>
-    <div class="tv-bar"><i style="width:{min(taux, 100):.0f}%;background:{niveau(taux)}"></i></div><span>{CAPACITE_RAME} places par rame</span></div>
-  <div class="tv-kt alerte"><small>Tronçon le plus chargé</small><b>{round(p)} %</b><span>{nom} · {nb(f)} voy./h</span></div>
-  <div class="tv-kt"><small>Trains en circulation</small><b>{n} / {PARC_RAMES}</b><span>{dec(ch["freq"])} trains/h par sens · {retard} en retard</span></div>
-</div>"""
-
-
-def html_tv_serpent(ch: dict) -> str:
-    n = len(NOMS) - 1
-    noms = "".join(f'<div class="n"><span>{NOMS[i]}</span>{"<span>" + NOMS[-1] + "</span>" if i == n - 1 else ""}</div>'
-                   for i in range(n))
-
-    def rangee(lib, pcts, flux):
-        return f'<div class="s">{lib}</div>' + "".join(
-            f'<div class="c"><i style="background:{niveau(p)}"></i><div><b>{round(p)} %</b><small>{nb(v)} voy./h</small></div></div>'
-            for p, v in zip(pcts, flux))
-
-    ech = "".join(f'<span><i style="background:{c}"></i>{lib}</span>' for lib, c in (
-        ("< 30 %", "#2AA5E0"), ("30–45 %", "#22B07D"), ("45–55 %", "#B9C23A"), ("55–70 %", "#F5A524"), ("70–85 %", "#F2711C"), ("≥ 85 %", ROUGE)))
-    return f"""
-<div class="tv-s">
-  <div class="tv-s-h"><b>Charge par tronçon</b><span>fenêtre validée · offre théorique {dec(ch["freq"])} trains/h par sens × {CAPACITE_RAME} places</span>
-    <div class="tv-ech">{ech}</div></div>
-  <div class="tv-sg"><div></div>{noms}{rangee("Dakar → AIBD", ch["pct_a"], ch["aller"])}{rangee("AIBD → Dakar", ch["pct_r"], ch["retour"])}</div>
 </div>"""
 
 
 # ═══════════════════════════════ Pages ═══════════════════════════════
 # En mode réel, seules les pages qui ont une vraie source sont proposées (sauf choix contraire dans parametres.toml).
 PAGE_DEFAUT = "frequentation" if REEL else "suivi"
-# L'écran TV est désactivé : il reste dans le code mais n'est plus proposé.
+NAV_TV = [("tv", "Écran<br>TV", "tv", "tv")]  # plein écran pour les écrans muraux (adresse directe : ?page=tv)
 NAV_JOJ = [("joj", "JOJ<br>Dakar 2026", "trophee", "joj")] if PARAM.joj_afficher else []
 if PAGES_SIMULEES:
     NAV = [("frequentation", "Fréquentation", "groupe", "frequentation"), *NAV_JOJ,
-           ("suivi", "Suivi des<br>trains", "train", "suivi"), ("charge", "Serpent<br>de charge", "reseau", "charge")]
+           ("suivi", "Suivi des<br>trains", "train", "suivi"), ("charge", "Serpent<br>de charge", "reseau", "charge"), *NAV_TV]
 else:
-    NAV = [("frequentation", "Fréquentation", "groupe", "frequentation"), *NAV_JOJ]
+    NAV = [("frequentation", "Fréquentation", "groupe", "frequentation"), *NAV_JOJ, *NAV_TV]
 PAGES = tuple(cle for cle, *_ in NAV)
 
 ss = st.session_state
@@ -2754,7 +2724,7 @@ def barre_laterale():
             with st.container(key=f"nav_{cle}"):
                 md(f'<div class="tb-navi{" actif" if cle == ss.page else ""}">{ICO[ic]}<span>{lib}</span></div>')
                 st.button(lib.replace("<br>", " "), key=f"navbtn_{cle}", on_click=aller, args=(cible,))
-        source_txt = ('<i></i><span>Données réelles<br>SQL Server</span>' if REEL else
+        source_txt = ('<i></i><span>Données en<br>temps réel</span>' if REEL else
                       '<i style="background:#8FB8FF;box-shadow:0 0 0 3px rgba(143,184,255,.25)"></i>'
                       '<span>Données de<br>démonstration</span>')
         md(f'<div class="tb-bas"><div class="tb-gtfs">{source_txt}</div>'
@@ -2902,32 +2872,42 @@ def page_charge():
             st.rerun()
 
 
-@st.fragment(run_every=RAFRAICHISSEMENT)
+def vue_tv() -> int:
+    """Vue affichée : fixée par l'adresse (?page=tv&vue=1 ou 2), sinon alternée toutes les TV_ROTATION secondes."""
+    fixe = str(st.query_params.get("vue") or ss.get("tv_vue") or "")
+    return int(fixe) - 1 if fixe in ("1", "2") else int(datetime.now().timestamp() // TV_ROTATION) % 2
+
+
+@st.fragment(run_every=f"{TV_ROTATION}s")
 def page_tv():
+    """Écran mural (1920 × 1080, sans défilement) : mêmes indicateurs que la page Fréquentation, toutes les gares,
+    sans commandes. Deux vues en alternance, chacune avec les 4 indicateurs du haut :
+      1. gares les plus affluentes + résumé JOJ ;  2. top 5 entrées/sorties + prévision 24 h + charge par tronçon.
+    Les données viennent du cache partagé : l'alternance n'ajoute pas de requêtes SQL. Adresse directe : ?page=tv"""
+    vue = vue_tv()
     try:
-        d = charger_donnees()
+        b = freq_base()
     except ErreurDonnees as e:
-        md(html_entete(maintenant(), "Écran TV", "GTFS théorique + simulation", ("GTFS indisponible", ROUGE)))
-        md(html_erreur(e.titre, e.detail, e.conseil)); return
-    trains, maj = d["trains"], d["maj"]
-    try:
-        b_flux = freq_base() if REEL else None
-    except ErreurDonnees as e:
-        b_flux = None
+        md(html_tv_entete(maintenant(), etat_donnees(None, erreur=True), vue))
         md(html_erreur(e.titre, e.detail, e.conseil))
-    ch = charge_reseau(maj, b_flux, d)
-    charges = {t["id"]: charge_train(t, ch) for t in trains}
-    md(html_tv_entete(maj))
-    if REEL:
-        md('<div class="tb-sim"><b>i</b><span>Écran opérationnel simulé à partir des horaires GTFS. Les validations sont disponibles par lots de 30 min.</span></div>')
+        return
+    G = b["options"][TOUTES]
+    md(html_tv_entete(b["now"], etat_donnees(b), vue))
+    blocs = [f'<div class="tb-sim"><b>!</b><span>{esc(m)}</span></div>' for m in b["avert"]]
+    if not REEL:
+        blocs.append(html_bandeau_simule())
+    blocs.append(html_freq_cartes(b, G, TOUTES))
+    if vue == 0:
+        hero = sur(html_hero, b, G, TOUTES)
+        blocs.append(f'<div class="tb-g tb-g2j">{hero}{sur(html_joj, b, G, TOUTES)}</div>' if PARAM.joj_afficher else hero)
     else:
-        md(html_bandeau_simule())
-    carte, cote = st.columns([2.2, 1])
-    couleurs = {"a": [niveau(p) for p in ch["pct_a"]], "r": [niveau(p) for p in ch["pct_r"]]}
-    with carte:
-        components.html(html_carte(trains, None, couleurs, LEG_TV, "Réseau et charge des trains", 9, 1.7), height=660)
-    md(html_tv_kpis(trains, charges, ch), cote)
-    md(html_tv_serpent(ch))
+        blocs.append(f'<div class="tv-g2">{html_top5(b, G)}{sur(html_prevision, b, G, TOUTES)}</div>')
+        try:  # charge par tronçon : facultative sur l'écran TV (pas d'erreur affichée si le GTFS est indisponible)
+            d = charger_donnees()
+            blocs.append(html_serpent(charge_reseau(d["maj"], b if REEL else None, d), (1, -1)))
+        except ErreurDonnees as e:
+            JOURNAL.warning("Écran TV : charge par tronçon non affichée (%s)", e.titre)
+    md('<div class="tv-z">' + "".join(blocs) + "</div>")
 
 
 st.markdown(f"<style>{CSS}</style>", unsafe_allow_html=True)
@@ -2938,7 +2918,7 @@ if ERREUR_PARAMETRES:  # réglage invalide : on le dit clairement, sans afficher
                    entete="Réglages à corriger"))
 elif ss.page == "tv":
     st.markdown(f"<style>{CSS_TV}</style>", unsafe_allow_html=True)
-    st.button("Quitter l'affichage TV", key="quitter_tv", on_click=aller, args=("charge",))
+    st.button("Quitter l'affichage TV", key="quitter_tv", on_click=aller, args=("frequentation",))
     page_tv()
 else:
     barre_laterale()
