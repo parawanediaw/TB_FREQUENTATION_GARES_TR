@@ -52,7 +52,6 @@ st.set_page_config(
 ASSETS = Path(__file__).parent / "assets"
 STATIC = Path(__file__).parent / "static"
 RAFRAICHISSEMENT = f"{PARAM.rafraichissement_secondes if REEL else 30}s"  # rafraîchissement automatique de la page
-TV_ROTATION = 20  # écran TV : secondes entre les 2 vues (1 : gares et JOJ ; 2 : top 5, prévision, charge)
 ACCELERATION = 1 if REEL else 10  # démonstration : trains 10 × plus rapides ; mode réel : horaires GTFS, temps réel
 
 # Polices et carte servies par l'application (dossier static/) quand elles y sont : aucun accès Internet
@@ -874,8 +873,7 @@ table.tb-tab { width: 100%; margin: 12px 0 0 !important; border-collapse: collap
 .tb-aff-pill.entree { background: #126F57; } .tb-aff-pill.sortie { background: #1F6FB8; }
 .tb-tend { font-size: 13px; font-weight: 800; white-space: nowrap; }
 .tb-tend.up { color: #12915F; } .tb-tend.down { color: #C0392B; } .tb-tend.eq, .tb-tend.nd { color: #5B6E93; }
-.tb-aff-img { display: block; flex: 1 1 96px; width: calc(100% - 20px); min-height: 96px; max-height: 150px; margin: 0 10px; border-radius: 8px; object-fit: cover; background: #EEF3F8; }
-.tb-aff-b { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 10px 10px 8px; margin-top: auto; }
+.tb-aff-b { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 12px 10px; }
 .tb-aff-n { display: flex; align-items: center; gap: 4px; min-width: 0; font-size: 17px; font-weight: 800; color: #7D142F; }
 .tb-aff-n svg { flex: none; width: 16px; height: 16px; color: #0B1F55; }
 .tb-aff-n span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -888,8 +886,8 @@ table.tb-tab { width: 100%; margin: 12px 0 0 !important; border-collapse: collap
 .tb-aff-f { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; border-top: 1px solid #EDF1F7; background: #F8FAFD;
   font-size: 11.5px; color: #22396E; }
 .tb-aff-f svg { width: 15px; height: 15px; color: #7D142F; }
-.tb-aff-s { display: grid; gap: 5px; padding: 2px 12px 10px; }
-.tb-aff-s > div { display: grid; grid-template-columns: 14px minmax(0, 92px) minmax(0, 1fr) 42px; gap: 7px; align-items: center; font-size: 11px; color: #22396E; }
+.tb-aff-s { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 6px; padding: 10px 12px; border-top: 1px solid #EDF1F7; }
+.tb-aff-s > div { display: grid; grid-template-columns: 14px minmax(0, 104px) minmax(0, 1fr) 42px; gap: 8px; align-items: center; font-size: 12.5px; color: #22396E; }
 .tb-aff-s .r { font-weight: 700; color: #7F93B3; } .tb-aff-s .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tb-aff-s .tb-barre { height: 6px; } .tb-aff-s b { text-align: right; font-weight: 700; color: #0B1F55; }
 .tb-aff-vide { display: grid; place-items: center; flex: 1; min-height: 160px; padding: 12px; font-size: 12px; color: #5B6E93; text-align: center; }
@@ -1724,54 +1722,59 @@ def tendance(v: float | None, suffixe: str = " %") -> str:
     return f'<span class="tb-tend {cls}">{fl} {"+" if v > 0 else ""}{v}{suffixe}</span>'
 
 
-def html_hero(b: dict, G: list[str], perimetre: str) -> str:
-    """Gares les plus affluentes sur le dernier lot reçu (30 min) : un classement en entrée, un en sortie.
-    Tendance = même lot de 30 min, les mêmes jours des semaines précédentes ; pic = heure la plus chargée du jour."""
+def gare_affluente(b: dict, G: list[str], s: str, n_suivantes: int = 5) -> dict | None:
+    """Gare la plus affluente du dernier lot reçu (30 min) dans le sens s (« E » ou « S ») :
+    gare, val, part du flux (%), tend (% vs le même lot des semaines précédentes), autres [(gare, nb)], pic du jour.
+    None s'il n'y a aucune validation dans le lot."""
     F, N = b["F"], b["N"]
     lot = F.get("m30", {})
+    vals = {g: _somme(lot, [g], s) for g in G}
+    total = sum(vals.values())
+    if total < 1:
+        return None
+    g = max(G, key=vals.get)
+    refs = [_somme(F.get(f"q{k}", {}), [g], s) for k in range(1, N + 1)
+            if _somme(F.get(f"q{k}", {}), b["options"][TOUTES]) > 0]
+    hab = median(refs) if refs else 0
+    pic = "—"
     df_j = d_horaire_recent(b["cle"], minuit(b["J"]), b["t_sup"])
-
-    def pic(g: str, s: str) -> str:
-        if df_j.empty:
-            return "—"
+    if not df_j.empty:
         d = df_j[(df_j["gare"] == g) & (df_j["sens"] == s)]
-        if d.empty:
-            return "—"
-        return f'{int(d.groupby("heure")["nb"].sum().idxmax()):02d}h00'
+        if not d.empty:
+            pic = f'{int(d.groupby("heure")["nb"].sum().idxmax()):02d}h00'
+    autres = [(x, vals[x]) for x in sorted((x for x in G if x != g), key=vals.get, reverse=True)[:n_suivantes] if vals[x] > 0]
+    return dict(gare=g, val=vals[g], part=vals[g] / total * 100, tend=pct(vals[g], hab) if hab else None, autres=autres, pic=pic)
+
+
+def html_hero(b: dict, G: list[str], perimetre: str) -> str:
+    """Gares les plus affluentes sur le dernier lot reçu (30 min) : un classement en entrée, un en sortie (sans photo de gare).
+    Tendance = même lot de 30 min, les mêmes jours des semaines précédentes ; pic = heure la plus chargée du jour."""
+    N = b["N"]
 
     def carte(s: str) -> str:
-        vals = {g: _somme(lot, [g], s) for g in G}
-        total = sum(vals.values())
         entree = s == "E"
         coul, pill = ("#168C68", "entree") if entree else ("#287BC1", "sortie")
         titre = "TOP ENTRÉES" if entree else "TOP SORTIES"
-        if total < 1:
+        x = gare_affluente(b, G, s, 5)
+        if x is None:
             return (f'<div class="tb-aff-c"><div class="tb-aff-ch"><span class="tb-aff-pill {pill}">{ICO[pill]}{titre}</span></div>'
                     f'<div class="tb-aff-vide">Aucune validation dans le dernier lot</div></div>')
-        g = max(G, key=vals.get)
-        refs = [_somme(F.get(f"q{k}", {}), [g], s) for k in range(1, N + 1)
-                if _somme(F.get(f"q{k}", {}), b["options"][TOUTES]) > 0]
-        hab = median(refs) if refs else 0
-        tend = tendance(pct(vals[g], hab)) if hab else tendance(None)
-        photo = "gare_dakar.png"  # image unique, quelle que soit la gare
-        part = vals[g] / total * 100
-        autres = sorted((x for x in G if x != g), key=vals.get, reverse=True)[:3]
+        g, part = x["gare"], x["part"]
         suivantes = ('<div class="tb-aff-s">' + "".join(
-            f'<div><span class="r">{k + 2}</span><span class="nm" title="{esc(x)}">{esc(x)}</span>'
-            f'<span class="tb-barre"><span style="width:{vals[x] / vals[g] * 100:.0f}%;background:{coul}"></span></span>'
-            f'<b>{nb(vals[x])}</b></div>' for k, x in enumerate(autres) if vals[x] > 0) + "</div>") if autres else ""
+            f'<div><span class="r">{k + 2}</span><span class="nm" title="{esc(n)}">{esc(n)}</span>'
+            f'<span class="tb-barre"><span style="width:{v / x["val"] * 100:.0f}%;background:{coul}"></span></span>'
+            f'<b>{nb(v)}</b></div>' for k, (n, v) in enumerate(x["autres"])) + "</div>") if x["autres"] else ""
         return f"""
 <div class="tb-aff-c">
   <div class="tb-aff-ch"><span class="tb-aff-pill {pill}">{ICO[pill]}{titre}</span>
-    <span title="vs. le même lot de 30 min, les mêmes jours des {N} semaines précédentes">{tend}</span></div>
-  {_img_tag(photo, "tb-aff-img")}
+    <span title="vs. le même lot de 30 min, les mêmes jours des {N} semaines précédentes">{tendance(x["tend"])}</span></div>
   <div class="tb-aff-b">
     <div><div class="tb-aff-n">{ICO["epingle"]}<span>{esc(g)}</span></div>
-      <div class="tb-aff-v" style="color:{coul if not entree else '#0B1F55'}">{nb(vals[g])}<small>voyageurs<br>{"entrants" if entree else "sortants"}</small></div></div>
+      <div class="tb-aff-v" style="color:{coul if not entree else '#0B1F55'}">{nb(x["val"])}<small>voyageurs<br>{"entrants" if entree else "sortants"}</small></div></div>
     <div class="tb-aff-r">{anneau(part, ROUGE if entree else coul)}<span><b>{round(part)} %</b><small>du flux<br>{"entrant" if entree else "sortant"}</small></span></div>
   </div>
   {suivantes}
-  <div class="tb-aff-f">{ICO["horloge"]}Pic du jour : <b>{pic(g, s)}</b></div>
+  <div class="tb-aff-f">{ICO["horloge"]}Pic du jour : <b>{x["pic"]}</b></div>
 </div>"""
 
     cible = cible_txt(perimetre, G)
@@ -2590,83 +2593,469 @@ def html_montees(ch: dict) -> str:
 
 # — Écran TV (fréquentation en grand, pour les écrans muraux) —
 CSS_TV = r"""
-.block-container, [data-testid="stMainBlockContainer"] { padding: 0 18px 16px !important; }
-.st-key-quitter_tv { position: fixed !important; right: 14px; bottom: 12px; z-index: 1001; width: auto !important; opacity: .55; transition: opacity .15s; }
+.block-container, [data-testid="stMainBlockContainer"] { padding: 0 !important; max-width: none !important; }
+[data-testid="stAppViewContainer"], [data-testid="stMain"] { overflow: hidden; }
+.st-key-quitter_tv { position: fixed !important; right: 10px; bottom: 6px; z-index: 1001; width: auto !important; opacity: .25; transition: opacity .15s; }
 .st-key-quitter_tv:hover { opacity: 1; }
-.st-key-quitter_tv button { min-height: 0 !important; padding: 4px 12px !important; border: 1px solid #DCE6F2 !important; border-radius: 8px !important;
-  background: #fff !important; color: #0B1F55 !important; }
+.st-key-quitter_tv button { min-height: 0 !important; padding: 3px 10px !important; border: 1px solid #DCE6F2 !important; border-radius: 8px !important;
+  background: #fff !important; color: #4A5F86 !important; }
 .st-key-quitter_tv button p { font-size: 11px !important; font-weight: 600; }
-.tv-h { display: flex; align-items: center; gap: 26px; height: 104px; margin: -20px -18px 0; padding: 0 28px; background: #7D142F; color: #fff; overflow: hidden; }
-.tv-h img.seter { flex: none; width: auto; height: 58px; }
-.tv-t { min-width: 0; }
-.tv-t b { display: block; font-size: 34px; font-weight: 800; line-height: 1.1; letter-spacing: -.02em; white-space: nowrap; }
-.tv-t span { display: block; margin-top: 4px; font-size: 16px; color: #F5DCE3; white-space: nowrap; }
-.tv-live { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-radius: 999px; background: rgba(255, 255, 255, .14);
-  font-size: 15px; font-weight: 800; letter-spacing: .08em; }
-.tv-live i { width: 12px; height: 12px; border-radius: 50%; background: #12D483; box-shadow: 0 0 0 4px rgba(18, 212, 131, .3); }
-.tv-joj { flex: none; padding: 8px 16px; border-radius: 10px; background: #fff; color: #7D142F; font-size: 16px; font-weight: 800; white-space: nowrap; }
-.tv-clock { flex: none; margin-left: auto; text-align: right; }
-.tv-clock b { display: block; font-size: 46px; font-weight: 800; line-height: 1; letter-spacing: -.02em; }
-.tv-clock span { display: block; margin-top: 5px; font-size: 15px; color: #F5DCE3; }
-.tv-h img.joj { flex: none; width: auto; height: 80px; }
-.tv-k { display: flex; flex-direction: column; gap: 12px; height: 660px; }
-.tv-kt { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; padding: 14px 22px; background: #fff;
-  border: 1px solid #E3ECF6; border-radius: 14px; box-shadow: 0 1px 2px rgba(16, 42, 90, .04), 0 8px 24px rgba(16, 42, 90, .06); }
-.tv-kt small { font-size: 17px; font-weight: 600; color: #22396E; }
-.tv-kt b { display: block; margin-top: 4px; font-size: 56px; font-weight: 800; line-height: 1.05; letter-spacing: -.02em; color: #0B1F55; }
-.tv-kt span { display: block; margin-top: 6px; font-size: 16px; color: #4A5F86; }
-.tv-kt.alerte { background: #7D142F; border-color: #7D142F; box-shadow: 0 12px 28px rgba(125, 20, 47, .3); }
-.tv-kt.alerte small { color: #F5DCE3; }
-.tv-kt.alerte b { color: #fff; }
-.tv-kt.alerte span { font-size: 18px; font-weight: 700; color: #fff; }
-.tv-bar { height: 10px; margin-top: 10px; border-radius: 6px; background: #E6EEF7; overflow: hidden; }
-.tv-bar i { display: block; height: 100%; border-radius: 6px; }
-.tv-s { padding: 14px 22px 16px; background: #fff; border: 1px solid #E3ECF6; border-radius: 14px;
-  box-shadow: 0 1px 2px rgba(16, 42, 90, .04), 0 8px 24px rgba(16, 42, 90, .06); }
-.tv-s-h { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-.tv-s-h b { font-size: 22px; font-weight: 800; color: #0B1F55; }
-.tv-s-h > span { font-size: 15px; color: #4A5F86; }
-.tv-ech { display: flex; align-items: center; gap: 14px; margin-left: auto; font-size: 14px; color: #22396E; }
-.tv-ech span { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-.tv-ech i { width: 14px; height: 14px; border-radius: 4px; }
-.tv-sg { display: grid; grid-template-columns: 170px repeat(5, minmax(0, 1fr)); column-gap: 12px; row-gap: 10px; align-items: center; margin-top: 12px; }
-.tv-sg .n { display: flex; justify-content: space-between; font-size: 16px; font-weight: 700; color: #0B1F55; }
-.tv-sg .s { font-size: 17px; font-weight: 800; color: #22396E; white-space: nowrap; }
-.tv-sg .c i { display: block; height: 22px; border-radius: 7px; }
-.tv-sg .c div { display: flex; align-items: baseline; gap: 8px; margin-top: 4px; }
-.tv-sg .c b { font-size: 22px; font-weight: 800; color: #0B1F55; }
-.tv-sg .c small { font-size: 13px; color: #4A5F86; white-space: nowrap; }
-@media (max-width: 1400px) {
-  .tv-h { gap: 18px; } .tv-t b { font-size: 26px; } .tv-t span { font-size: 13px; } .tv-clock b { font-size: 34px; } .tv-h img.joj { display: none; }
-  .tv-kt b { font-size: 40px; } .tv-kt small { font-size: 14px; } .tv-kt span, .tv-kt.alerte span { font-size: 13px; }
-  .tv-sg { grid-template-columns: 120px repeat(5, minmax(0, 1fr)); } .tv-sg .c b { font-size: 17px; } .tv-ech { display: none; }
-}
-@media (max-width: 1000px) { .tv-live, .tv-joj { display: none; } }
-.tv-z { margin-top: 14px; }
-.tv-pager { flex: none; display: flex; flex-direction: column; gap: 8px; }
-.tv-pager i { width: 10px; height: 10px; border-radius: 50%; background: rgba(255, 255, 255, .3); }
-.tv-pager i.on { background: #fff; }
-.tv-z > * + * { margin-top: 10px; }
-.tv-g2 { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) minmax(0, 1.32fr); align-items: start; }
-@media (min-width: 1800px) { .tv-z { zoom: 1.18; } }
-@media (max-width: 1200px) { .tv-g2 { grid-template-columns: minmax(0, 1fr); } }
+/* Écran conçu pour 1920 × 1080. Le petit script AJUSTE_TV calcule le zoom pour qu'il tienne en entier
+   dans la fenêtre (largeur ET hauteur) ; les règles ci-dessous ne servent que si le script ne s'exécute pas. */
+.stApp, [data-testid="stAppViewContainer"] { background: #F4F8FD !important; }
+[data-testid="stIFrame"], .stElementContainer:has(> iframe[height="0"]), .element-container:has(iframe[height="0"]) { display: none !important; }
+.tvx-w { margin-top: -20px; display: flex; justify-content: center; }
+.tvx { width: 1920px; height: 1080px; overflow: hidden; background: #F4F8FD; color: #0B1F55; zoom: .66; }
+@media (min-width: 1360px) { .tvx { zoom: .708; } }
+@media (min-width: 1440px) { .tvx { zoom: .75; } }
+@media (min-width: 1536px) { .tvx { zoom: .8; } }
+@media (min-width: 1600px) { .tvx { zoom: .833; } }
+@media (min-width: 1680px) { .tvx { zoom: .875; } }
+@media (min-width: 1920px) { .tvx { zoom: 1; } }
+@media (min-width: 2560px) { .tvx { zoom: 1.333; } }
+@media (min-width: 3840px) { .tvx { zoom: 2; } }
+@media (max-height: 1000px) and (min-width: 1680px) { .tvx { zoom: .9; } }
+@media (max-height: 900px) and (min-width: 1440px) { .tvx { zoom: .8; } }
+@media (max-height: 800px) { .tvx { zoom: .7; } }
+@media (max-height: 700px) { .tvx { zoom: .6; } }
+.tvx * { box-sizing: border-box; }
+.tvx .n { font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+/* En-tête : même charte que les autres pages (fond clair, titre bleu nuit, bannière Ayo à droite) */
+.tvx-h { position: relative; display: flex; align-items: center; gap: 28px; height: 112px; padding: 0 0 0 30px; overflow: hidden;
+  background: linear-gradient(90deg, #F8FBFF 0%, #F3F8FE 55%, #EBF4FE 100%); border-bottom: 1px solid #E3EBF5; box-shadow: 0 8px 18px -14px rgba(16,42,90,.25); }
+.tvx-logo { flex: none; display: flex; align-items: center; }
+.tvx-logo img { display: block; width: auto; height: 46px; }
+.tvx-sep { flex: none; width: 1px; height: 58px; background: #D5E0EE; }
+.tvx-t b { display: block; font-size: 30px; font-weight: 800; letter-spacing: -.02em; line-height: 1.15; white-space: nowrap; }
+.tvx-t span { display: block; margin-top: 6px; font-size: 16px; font-weight: 500; color: #1B3266; white-space: nowrap; }
+.tvx-live { flex: none; display: flex; flex-direction: column; gap: 10px; }
+.tvx-live-l { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; white-space: nowrap; }
+.tvx-live-l i { width: 10px; height: 10px; border-radius: 50%; }
+.tvx-live-d { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #3D5585; white-space: nowrap; }
+.tvx-live-d svg { width: 15px; height: 15px; }
+.tvx-joj { flex: none; padding: 8px 16px; border-radius: 999px; background: #7D142F; color: #fff; font-size: 15px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; }
+.tvx-clock { flex: none; margin-left: auto; text-align: right; }
+.tvx-clock b { display: block; font-size: 42px; font-weight: 600; line-height: 1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.tvx-clock span { font-size: 14px; color: #3D5585; }
+.tvx-h img.banniere { flex: none; align-self: flex-end; width: auto; height: 108px; margin-right: 18px; }
+.tvx-p { display: grid; grid-template-rows: 172px minmax(0, 1fr) 104px; gap: 16px; height: 968px; padding: 18px 24px 20px; }
+.tvx-carte { background: #fff; border: 1px solid #EBF1F8; border-radius: 16px; box-shadow: 0 1px 2px rgba(16,42,90,.04), 0 6px 18px rgba(16,42,90,.05); }
+.tvx-ct { display: flex; align-items: baseline; gap: 12px; font-size: 20px; font-weight: 700; white-space: nowrap; }
+.tvx-ct small { font-size: 14px; font-weight: 400; color: #22396E; }
+/* 4 indicateurs : pastille ronde colorée + valeur + mini-courbe, comme les cartes de la page Fréquentation */
+.tvx-k { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.tvx-kt { position: relative; display: flex; gap: 18px; padding: 22px 24px; min-width: 0; overflow: hidden; }
+.tvx-vague { position: absolute; right: 0; bottom: 0; width: 100%; height: 100%; pointer-events: none; }
+.tvx-ic { flex: none; display: grid; place-items: center; width: 58px; height: 58px; border-radius: 50%; }
+.tvx-ic svg { width: 30px; height: 30px; }
+.tvx-kx { min-width: 0; flex: 1; }
+.tvx-kl { font-size: 16px; font-weight: 500; white-space: nowrap; } .tvx-kl em { font-style: normal; color: #3D5585; }
+.tvx-kv { margin: 6px 0 10px; font-size: 50px; line-height: 1.05; white-space: nowrap; }
+.tvx-kv u { text-decoration: none; margin-left: 8px; font-size: 18px; color: #4A5F86; }
+.tvx-kd { display: flex; align-items: center; gap: 8px; font-size: 15px; color: #22396E; white-space: nowrap; overflow: hidden; }
+.tvx-kd .ch { padding: 3px 10px; border-radius: 999px; font-weight: 600; }
+.tvx-sp { position: absolute; right: 22px; top: 62px; }
+.ch.up { background: #E3F6EE; color: #12915F; } .ch.down { background: #FBE9ED; color: #7D142F; } .ch.eq { background: #EEF2F8; color: #4A5F86; }
+.tvx .up { color: #12915F; } .tvx .down { color: #7D142F; } .tvx .eq { color: #4A5F86; }
+.tvx-kt.fort { border: 0; color: #fff; background: radial-gradient(120% 120% at 100% 0%, #9B2347 0%, #7D142F 45%, #63102A 100%); box-shadow: 0 10px 26px rgba(125,20,47,.22); }
+.tvx-kt.fort .tvx-ic { background: rgba(255,255,255,.16); color: #fff; } 
+.tvx-kt > .tvx-ic, .tvx-kt > .tvx-kx { position: relative; }
+.tvx-kt.fort .tvx-kl em, .tvx-kt.fort .tvx-kd { color: #F5DCE3; } .tvx-kt.fort .tvx-kv u { color: #F5DCE3; }
+.tvx-m { display: grid; grid-template-columns: 1.46fr .8fr 1.2fr; gap: 16px; min-height: 0; }
+/* Gares les plus affluentes : même bloc que la page Fréquentation */
+.tvx-bloc { position: relative; overflow: hidden; display: flex; flex-direction: column; min-height: 0; padding: 18px 20px 16px; border-radius: 18px; color: #fff;
+  background: radial-gradient(120% 90% at 100% 0%, #9B2347 0%, #7D142F 45%, #63102A 100%); box-shadow: 0 8px 22px rgba(125,20,47,.18); }
+.tvx-deco { position: absolute; right: -24px; top: -34px; width: 300px; opacity: .13; filter: brightness(0) invert(1); pointer-events: none; }
+.tvx-bt { position: relative; display: flex; align-items: center; gap: 14px; }
+.tvx-bt .ic { flex: none; display: grid; place-items: center; width: 50px; height: 50px; border-radius: 13px; background: rgba(255,255,255,.14); }
+.tvx-bt .ic svg { width: 28px; height: 28px; }
+.tvx-bt b { display: block; font-size: 19px; font-weight: 800; letter-spacing: .02em; }
+.tvx-bt span { display: block; margin-top: 3px; font-size: 14px; color: #F5DCE3; }
+.tvx-bg { position: relative; flex: 1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; min-height: 0; }
+.tvx-ac { display: flex; flex-direction: column; min-width: 0; background: #fff; border-radius: 14px; color: #0B1F55; overflow: hidden; box-shadow: 0 4px 14px rgba(30,10,20,.16); }
+.tvx-ah { display: flex; justify-content: space-between; align-items: center; padding: 14px 14px 0; }
+.tvx-tag { display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px 7px 11px; border-radius: 999px; color: #fff; font-size: 13px; font-weight: 800; }
+.tvx-tag svg { width: 17px; height: 17px; }
+.tvx-ah em { font-style: normal; font-size: 17px; font-weight: 600; }
+.tvx-at { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 16px 10px; }
+.tvx-ag { display: flex; align-items: center; gap: 6px; font-size: 22px; font-weight: 800; color: #7D142F; white-space: nowrap; overflow: hidden; max-width: 250px; }
+.tvx-ag i { flex: none; display: grid; place-items: center; width: 26px; height: 26px; margin-right: 6px; border-radius: 50%; background: #7D142F;
+  font-style: normal; font-size: 13px; font-weight: 700; color: #fff; } .tvx-ag span { overflow: hidden; text-overflow: ellipsis; }
+.tvx-an { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+.tvx-an b { font-size: 44px; line-height: 1.05; white-space: nowrap; }
+.tvx-an span { font-size: 13px; font-weight: 600; color: #4A5F86; line-height: 1.25; }
+.tvx-at svg.anneau { flex: none; }
+.tvx-als { flex: 1; display: flex; flex-direction: column; justify-content: space-around; padding: 6px 16px; border-top: 1px solid #EDF1F7; }
+.tvx-al { display: grid; grid-template-columns: 18px minmax(0, 1fr) 92px 52px; gap: 10px; align-items: center; font-size: 17px; color: #22396E; }
+.tvx-al i { font-style: normal; color: #7F93B3; font-weight: 700; }
+.tvx-al span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tvx-al div { height: 8px; border-radius: 4px; background: #EEF3F9; overflow: hidden; } .tvx-al u { display: block; height: 100%; border-radius: 4px; }
+.tvx-al b { text-align: right; color: #0B1F55; }
+.tvx-ap { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 11px; background: #F8FAFD; border-top: 1px solid #EDF1F7; font-size: 15px; color: #22396E; }
+.tvx-ap svg { width: 18px; height: 18px; color: #7D142F; }
+.tvx-vide { flex: 1; display: grid; place-items: center; padding: 20px; font-size: 17px; color: #5B6E93; text-align: center; }
+/* Top 5 du jour */
+.tvx-cum { display: flex; flex-direction: column; min-height: 0; padding: 18px 20px 12px; }
+.tvx-cu-t { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding-top: 10px; border-top: 1px solid #EDF1F7; font-size: 14px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #22396E; }
+.tvx-cu-t svg { width: 18px; height: 18px; }
+.tvx-cu { flex: 1; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto 40px; column-gap: 10px; align-items: center; align-content: center; font-size: 17px; }
+.tvx-cu i { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; font-style: normal; font-size: 13px; font-weight: 700; }
+.tvx-cu span { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tvx-cu small { font-size: 13px; color: #4A5F86; text-align: right; }
+.tvx-cu div { grid-column: 2 / 5; height: 5px; margin-top: 3px; border-radius: 3px; background: #EEF3F9; overflow: hidden; }
+.tvx-cu u { display: block; height: 100%; border-radius: 3px; }
+/* Réel vs prévision : mêmes couleurs que le graphique de prévision de la page Fréquentation */
+.tvx-cb { display: flex; flex-direction: column; min-height: 0; padding: 18px 20px 16px; }
+.tvx-lg { display: flex; gap: 16px; margin-left: auto; font-size: 13px; font-weight: 500; color: #22396E; }
+.tvx-lg span { display: flex; align-items: center; gap: 7px; } .tvx-lg u { width: 26px; height: 0; border-top: 3px solid; }
+.tvx-gr { flex: 1; min-height: 0; margin-top: 6px; }
+.tvx-gr svg { display: block; width: 100%; height: 100%; }
+.tvx-pv { display: grid; grid-template-columns: 1.25fr 1fr 1fr; gap: 10px; margin-top: 8px; }
+.tvx-pv > div { min-width: 0; padding: 10px 14px; border-radius: 12px; background: #F3F8FE; border: 1px solid #E1ECFA; }
+.tvx-pv small { display: block; font-size: 12.5px; font-weight: 600; color: #1B3266; white-space: nowrap; }
+.tvx-pv b { display: block; margin: 2px 0; font-size: 28px; line-height: 1.1; color: #0B1F55; white-space: nowrap; }
+.tvx-pv span { display: block; font-size: 12.5px; color: #4A5F86; white-space: nowrap; }
+.tvx-pv .ok { display: flex; align-items: center; gap: 12px; padding: 4px 12px 4px 4px; background: #EEF9F4; border-color: #CDEEDF; }
+.tvx-pv .ok svg { flex: none; } .tvx-pv .ok small { font-size: 14px; color: #0B7A55; } .tvx-pv .ok span { font-size: 13px; line-height: 1.35; }
+/* À retenir */
+.tvx-r { position: relative; display: flex; align-items: stretch; overflow: hidden; background: linear-gradient(90deg, #fff 60%, #FBF1F4 100%); }
+.tvx-r > :not(.tvx-vague) { position: relative; }
+.tvx-et { flex: none; display: flex; flex-direction: column; justify-content: center; gap: 2px; width: 220px; padding: 0 40px 0 26px; color: #fff;
+  background: radial-gradient(120% 140% at 0% 0%, #9B2347 0%, #7D142F 55%, #63102A 100%); clip-path: polygon(0 0, 100% 0, 86% 100%, 0 100%); }
+.tvx-et small { font-size: 12px; font-weight: 600; letter-spacing: .12em; color: #F5DCE3; } .tvx-et b { font-size: 20px; font-weight: 800; }
+.tvx-f { flex: 1; min-width: 0; display: flex; align-items: center; gap: 16px; padding: 0 24px; }
+.tvx-f + .tvx-f { border-left: 1px solid #EBF1F8; }
+.tvx-f .ic { flex: none; display: grid; place-items: center; width: 50px; height: 50px; border-radius: 50%; }
+.tvx-f .ic svg { width: 26px; height: 26px; }
+.tvx-f b { font-size: 36px; white-space: nowrap; }
+.tvx-f span { min-width: 0; font-size: 15px; line-height: 1.35; color: #22396E; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tvx-f span strong { display: block; font-size: 17px; font-weight: 700; color: #0B1F55; overflow: hidden; text-overflow: ellipsis; }
+.tvx-err { padding: 24px; zoom: 1.5; }
 """
 
+CAL_TV = _svg('<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>', 2)
+TV_ENTREE, TV_SORTIE = "#126F57", "#1F6FB8"
+# Ajuste le zoom de l'écran TV à la fenêtre : zoom = min(largeur / 1920, hauteur disponible / 1080).
+# Exécuté dans un cadre invisible de la même origine ; il agit sur la page et se réapplique à chaque
+# rafraîchissement des données et à chaque redimensionnement de la fenêtre.
+AJUSTE_TV = """<script>
+(function () {
+  const w = window.parent, d = w.document;
+  if (w.__tvxAjuste) { w.__tvxAjuste(); return; }
+  w.__tvxAjuste = function () {
+    d.querySelectorAll('.tvx').forEach(function (el) {
+      el.style.zoom = 1;
+      const haut = Math.max(el.getBoundingClientRect().top, 0);
+      const z = Math.min(w.innerWidth / 1920, (w.innerHeight - haut - 4) / 1080);
+      el.style.zoom = Math.max(z, .3).toFixed(4);
+    });
+  };
+  w.addEventListener('resize', w.__tvxAjuste);
+  new w.MutationObserver(function () { if (d.querySelector('.tvx:not([style])')) w.__tvxAjuste(); })
+    .observe(d.body, {childList: true, subtree: true});
+  w.__tvxAjuste();
+})();
+</script>"""
+# Vagues décoratives (carte « Effet JOJ » et bandeau « À retenir »)
+VAGUE_TV = ('<svg class="tvx-vague" viewBox="0 0 460 170" preserveAspectRatio="none">'
+            '<path d="M160 170 C260 120 330 150 460 40 L460 170 Z" fill="#fff" opacity=".10"/>'
+            '<path d="M240 170 C320 140 380 150 460 90 L460 170 Z" fill="#fff" opacity=".12"/>'
+            '<path d="M120 170 C240 110 300 120 460 10" fill="none" stroke="#fff" stroke-opacity=".28" stroke-width="1.5"/></svg>')
+VAGUE_BAS = ('<svg class="tvx-vague" viewBox="0 0 1870 104" preserveAspectRatio="none">'
+             '<path d="M1500 104 C1640 80 1720 60 1870 0 L1870 104 Z" fill="#7D142F" opacity=".10"/>'
+             '<path d="M1620 104 C1720 88 1790 70 1870 40 L1870 104 Z" fill="#7D142F" opacity=".14"/>'
+             '<path d="M1420 104 C1600 70 1700 40 1870 -10" fill="none" stroke="#7D142F" stroke-opacity=".18" stroke-width="1.5"/></svg>')  # mêmes verts / bleus que les pastilles « Top entrées / Top sorties »
 
-def html_tv_entete(maj: datetime, etat: tuple[str, str] | None = None, vue: int | None = None) -> str:
-    """Bandeau de l'écran TV ; « etat » = (libellé, couleur) de la fraîcheur des données, comme sur la page Fréquentation."""
+
+def html_tv_entete(maj: datetime, etat: tuple[str, str] | None = None) -> str:
+    """Bandeau de l'écran TV, à la charte des autres pages ; « etat » = (libellé, couleur) de la fraîcheur des données."""
     libelle, coul = etat or ("En direct", VERT_OK)
-    coul = "#FF8FA3" if coul == ROUGE else coul  # pastille rouge lisible sur le bandeau bordeaux
     return f"""
-<div class="tv-h">
-  {_img_tag("logo_seter.png", "seter")}
-  <div class="tv-t"><b>Fréquentation des gares</b><span>TER Dakar ↔ AIBD · entrées et sorties · données en temps réel</span></div>
-  <div class="tv-live"><i style="background:{coul};box-shadow:0 0 0 4px {coul}4D"></i>{esc(libelle)}</div>
-  <div class="tv-joj">JOJ Dakar 2026 · {statut_joj(maj.date())}</div>
-  <div class="tv-clock"><b>{maj:%H:%M}</b><span>{date_fr(maj)}</span></div>
-  {"" if vue is None else '<div class="tv-pager">' + "".join(f'<i class="{"on" if k == vue else ""}"></i>' for k in (0, 1)) + "</div>"}
-  {_img_tag("embleme_dakar2026.png", "joj")}
+<div class="tvx-h">
+  <div class="tvx-logo">{_img_tag("logo_seter_rouge.png")}</div><div class="tvx-sep"></div>
+  <div class="tvx-t"><b>Fréquentation des gares</b><span>TER Dakar ↔ AIBD · l'essentiel en temps réel</span></div>
+  <div class="tvx-live"><div class="tvx-live-l"><i style="background:{coul};box-shadow:0 0 0 4px {coul}29"></i>{esc(libelle)}</div>
+    <div class="tvx-live-d">{CAL_TV}<span>{date_fr(maj)}</span></div></div>
+  {f'<div class="tvx-joj">JOJ Dakar 2026 · {statut_joj(maj.date())}</div>' if PARAM.joj_afficher else ""}
+  <div class="tvx-clock"><b>{maj:%H:%M}</b><span>heure de mise à jour</span></div><div class="tvx-sep"></div>
+  {_img_tag("banniere_dakar2026_fondu.png", "banniere")}
 </div>"""
+
+
+def _tv_var(v: int | None, texte: str) -> str:
+    if v is None:
+        return f"<span>{texte}</span>"
+    cls, fl = ("up", "↑") if v > 0 else (("down", "↓") if v < 0 else ("eq", "→"))
+    return f'<span class="ch {cls}">{fl} {"+" if v > 0 else ("−" if v < 0 else "")}{abs(v)} %</span><span>{texte}</span>'
+
+
+def _tv_spark(vals: list[float], coul: str, W: int = 132, H: int = 44) -> str:
+    """Mini-courbe de tendance (aire dégradée), affichée à droite d'un indicateur."""
+    if len(vals) < 2 or max(vals) <= 0:
+        return ""
+    m = max(vals)
+    p = " ".join(f"{i * W / (len(vals) - 1):.1f},{H - 3 - v / m * (H - 8):.1f}" for i, v in enumerate(vals))
+    gid = "sp" + coul.lstrip("#")
+    return (f'<svg class="tvx-sp" width="{W}" height="{H}" viewBox="0 0 {W} {H}"><defs><linearGradient id="{gid}" x1="0" y1="0" x2="0" y2="1">'
+            f'<stop offset="0" stop-color="{coul}" stop-opacity=".28"/><stop offset="1" stop-color="{coul}" stop-opacity="0"/></linearGradient></defs>'
+            f'<polygon points="0,{H} {p} {W},{H}" fill="url(#{gid})"/><polyline points="{p}" fill="none" stroke="{coul}" stroke-width="2.5" '
+            f'stroke-linejoin="round" stroke-linecap="round"/></svg>')
+
+
+def _tv_horaire(b: dict, G: list[str]) -> dict:
+    """{heure : (entrées, sorties)} du jour, sur les gares G (même requête en cache que le graphique de prévision)."""
+    df = d_horaire_recent(b["cle"], minuit(b["J"]), b["t_sup"])
+    if df.empty:
+        return {}
+    d = df[df["gare"].isin(list(G))]
+    if "jour" in d.columns:
+        d = d[d["jour"] == b["J"]]
+    out = {}
+    for (h, s), v in d.groupby(["heure", "sens"])["nb"].sum().items():
+        e, so = out.get(int(h), (0.0, 0.0))
+        out[int(h)] = (e + float(v), so) if s == "E" else (e, so + float(v))
+    return out
+
+
+def _tv_anneau(p: float, coul: str, taille: int, txt: str, sous: str, fond: str = "#E6EEF7") -> str:
+    c = 2 * math.pi * 40
+    return (f'<svg class="anneau" width="{taille}" height="{taille}" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="none" stroke="{fond}" stroke-width="10"/>'
+            f'<circle cx="50" cy="50" r="40" fill="none" stroke="{coul}" stroke-width="10" stroke-linecap="round" stroke-dasharray="{c * max(0, min(p, 100)) / 100:.0f} {c:.0f}" transform="rotate(-90 50 50)"/>'
+            f'<text x="50" y="54" text-anchor="middle" font-size="22" font-weight="600" fill="{coul}">{txt}</text>'
+            f'<text x="50" y="69" text-anchor="middle" font-size="9.5" fill="#5B6E93">{sous}</text></svg>')
+
+
+def html_tv_kpis(b: dict, G: list[str], a: dict | None) -> str:
+    """Les 4 indicateurs : entrées, sorties, voyageurs de la dernière heure (entrées seules), effet JOJ."""
+    F = b["F"]
+    jour, veille = F.get("jour", {}), F.get("veille", {})
+    E, S = _somme(jour, G, "E"), _somme(jour, G, "S")
+    vE, vS = _somme(veille, G, "E"), _somme(veille, G, "S")
+    rythme = _somme(F.get("m60", {}), G, "E")
+    habituel = semaine_habituelle(b, G)
+    depuis = f"depuis {b['ouv']:02d}h00"
+    hor = _tv_horaire(b, G)
+    heures = sorted(h for h in hor if h >= b["ouv"])
+    cumul = lambda k: [sum(hor[x][k] for x in heures[: i + 1]) for i in range(len(heures))]
+
+    def tuile(ic, fond, coul, lib, prec, val, bas, spark="", fort=False):
+        deco = VAGUE_TV if fort else ""
+        return (f'<div class="tvx-carte tvx-kt{" fort" if fort else ""}" >{deco}'
+                f'<div class="tvx-ic" style="background:{fond};color:{coul}">{ICO[ic]}</div>'
+                f'<div class="tvx-kx"><div class="tvx-kl">{lib} <em>{prec}</em></div><div class="tvx-kv n">{val}</div>'
+                f'<div class="tvx-kd">{bas}</div></div>{spark}</div>')
+
+    hier = lambda v, ref: _tv_var(pct(v, ref), "vs hier à la même heure") if ref > 0 else "<span>pas de données hier à cette heure</span>"
+    tuiles = [
+        tuile("entree", "#D9F5EA", "#12B97A", "Entrées", depuis, f'<span style="color:{ROUGE}">{nb(E)}</span>', hier(E, vE),
+              _tv_spark([0.0] + cumul(0), "#12B97A")),
+        tuile("sortie", "#E3F0FE", "#0A6CF5", "Sorties", depuis, f'<span style="color:{ROUGE}">{nb(S)}</span>', hier(S, vS),
+              _tv_spark([0.0] + cumul(1), "#0A6CF5")),
+        tuile("groupe", "#E3F0FE", "#0A66F0", "Voyageurs", "dernière heure reçue", nb(rythme),
+              _tv_var(pct(rythme, habituel), "vs semaine habituelle") if habituel else "<span>pas de référence habituelle</span>",
+              _tv_spark([hor[h][0] for h in heures] + [rythme], "#0A66F0"))]
+    Ej = a["E"] if a else None
+    if Ej and a["dans_jeux"] and Ej["vs_normal"] is not None:
+        v = Ej["vs_normal"]
+        tuiles.append(tuile("trophee", "", "", "Effet JOJ", f"depuis le {JOJ_DEBUT:%d/%m}", f"{'+' if v > 0 else ('−' if v < 0 else '')}{abs(v)} %",
+                            f"<span>{nb(Ej['R'])} voyageurs · vs période normale</span>", fort=True))
+    else:  # hors JOJ (ou sans référence) : le dernier lot reçu
+        e30, s30 = _somme(F.get("m30", {}), G, "E"), _somme(F.get("m30", {}), G, "S")
+        tuiles.append(tuile("horloge", "", "", "Dernier lot reçu", "30 min", f"{nb(e30)}<u>entrées</u>",
+                            f"<span>{nb(s30)} sorties · jusqu'à {hh(b['t_ref'])}</span>", fort=True))
+    return '<div class="tvx-k">' + "".join(tuiles) + "</div>"
+
+
+def html_tv_gares(b: dict, G: list[str]) -> str:
+    """Bloc « Gares les plus affluentes » (dernier lot de 30 min) : même présentation que la page Fréquentation, en grand."""
+    def carte(s: str) -> str:
+        entree = s == "E"
+        coul, fort = (TV_ENTREE, ROUGE) if entree else (TV_SORTIE, TV_SORTIE)
+        tag = f'<span class="tvx-tag" style="background:{coul}">{ICO["entree" if entree else "sortie"]}{"TOP ENTRÉES" if entree else "TOP SORTIES"}</span>'
+        x = gare_affluente(b, G, s, 5)
+        if x is None:
+            return f'<div class="tvx-ac"><div class="tvx-ah">{tag}</div><div class="tvx-vide">Aucune validation dans le dernier lot</div></div>'
+        t = x["tend"]
+        var = "" if t is None else f'<em class="{"up" if t > 0 else ("down" if t < 0 else "eq")}">{"↗" if t > 0 else ("↘" if t < 0 else "→")} {"+" if t > 0 else ""}{t} %</em>'
+        barre = "#168C68" if entree else "#287BC1"
+        lignes = "".join(f'<div class="tvx-al"><i>{k + 2}</i><span>{esc(g)}</span><div><u style="width:{v / x["val"] * 100:.0f}%;background:{barre}"></u></div>'
+                         f'<b class="n">{nb(v)}</b></div>' for k, (g, v) in enumerate(x["autres"]))
+        return f"""
+<div class="tvx-ac"><div class="tvx-ah">{tag}{var}</div>
+  <div class="tvx-at"><div style="min-width:0"><div class="tvx-ag"><i style="background:{fort}">1</i><span>{esc(x["gare"])}</span></div>
+    <div class="tvx-an"><b class="n" style="color:{"#0B1F55" if entree else fort}">{nb(x["val"])}</b><span>voyageurs<br>{"entrants" if entree else "sortants"}</span></div></div>
+    {_tv_anneau(x["part"], fort, 100, f"{round(x['part'])} %", "du flux")}</div>
+  <div class="tvx-als">{lignes}</div><div class="tvx-ap">{ICO["horloge"]}Pic du jour : <b class="n">{x["pic"]}</b></div></div>"""
+
+    return (f'<div class="tvx-bloc">{_img_tag("train_illustration.png", "tvx-deco")}<div class="tvx-bt"><span class="ic">{ICO["train"]}</span>'
+            f'<div><b>GARES LES PLUS AFFLUENTES</b><span>Entrées / Sorties — dernier lot reçu (30 min) · jusqu\'à {hh(b["t_ref"])}</span></div></div>'
+            f'<div class="tvx-bg">{carte("E")}{carte("S")}</div></div>')
+
+
+def html_tv_cumul(b: dict, G: list[str]) -> str:
+    """Top 5 du cumul du jour : un classement en entrées, un en sorties, chacun trié par son propre nombre."""
+    jour = b["F"].get("jour", {})
+
+    def classement(s: str, lib: str, coul: str, ic: str) -> str:
+        vals = {g: _somme(jour, [g], s) for g in G}
+        total = sum(vals.values()) or 1
+        top = [g for g in sorted(G, key=vals.get, reverse=True)[:5] if vals[g] > 0]
+        mx = vals[top[0]] if top else 1
+        return f'<div class="tvx-cu-t" style="color:{coul}">{ICO[ic]}{lib}</div>' + ("".join(
+            f'<div class="tvx-cu"><i style="background:{coul if k == 0 else "#EEF2F8"};color:{"#fff" if k == 0 else "#22396E"}">{k + 1}</i>'
+            f'<span>{esc(g)}</span><b class="n">{nb(vals[g])}</b><small>{round(vals[g] / total * 100)} %</small>'
+            f'<div><u style="width:{vals[g] / mx * 100:.0f}%;background:{coul}"></u></div></div>' for k, g in enumerate(top))
+            or '<div class="tvx-vide">Aucune validation aujourd\'hui</div>')
+
+    return (f'<div class="tvx-carte tvx-cum"><div class="tvx-ct">Top 5 du jour<small>cumul depuis {b["ouv"]:02d}h00</small></div>'
+            f'{classement("E", "Entrées", TV_ENTREE, "entree")}{classement("S", "Sorties", TV_SORTIE, "sortie")}</div>')
+
+
+def html_tv_prevision(b: dict, G: list[str]) -> str:
+    """Entrées du jour heure par heure : le réel superposé à la prévision, pour juger le modèle.
+    Précision = 100 % − (somme des écarts |réel − prévu| des heures terminées) / (total réel de ces heures)."""
+    t_ref, J = b["t_ref"], b["J"]
+    h0 = t_ref.replace(minute=0, second=0, microsecond=0)
+    ouv, ferm = b["ouv"], b["ferm"] if b["ferm"] > b["ouv"] else 24
+    heures = list(range(ouv, ferm))
+    df = d_horaire_recent(b["cle"], minuit(J), b["t_sup"])
+    reel = {}
+    if not df.empty:
+        d = df[(df["sens"] == "E") & df["gare"].isin(list(G))]
+        if "jour" in d.columns:
+            d = d[d["jour"] == J]
+        reel = {int(h): float(v) for h, v in d.groupby("heure")["nb"].sum().items()}
+    P = previsions_par_heure(b, G)
+    prev = {h: P[minuit(J) + timedelta(hours=h)][0] for h in heures if minuit(J) + timedelta(hours=h) in P}
+    finies = [h for h in heures if h < h0.hour] if h0.date() == J else heures  # heures entièrement reçues
+    # Trou de chargement : heure sans aucune validation alors que le modèle en attend ; ses voisines sont
+    # probablement incomplètes (lot de 30 min manquant). Elles sont exclues de la précision et grisées.
+    manque = {h for h in finies if reel.get(h, 0) <= 0 and prev.get(h, 0) >= 50}
+    douteuses = manque | {h + d for h in manque for d in (-1, 1) if h + d in finies}
+    r_pts = [(h + .5, reel.get(h, 0.0)) for h in finies if h not in manque]
+    rythme = _somme(b["F"].get("m60", {}), G, "E")
+    if h0.date() == J and ouv <= h0.hour < ferm and b.get("du_jour"):
+        r_pts.append(((t_ref - minuit(J)).total_seconds() / 3600 - .5, rythme))  # dernière heure glissante reçue
+    p_pts = [(h + .5, v) for h, v in sorted(prev.items())]
+    vmax = max([v for _, v in r_pts + p_pts] + [1])
+    pas = graduation(vmax * 1.12, 3)
+    ymax = pas * 3
+    W, H, g0, d0, t0, b0 = 600, 400, 50, 16, 40, 30
+    X = lambda x: g0 + (x - ouv) / max(ferm - ouv, 1) * (W - g0 - d0)
+    Y = lambda v: H - b0 - v / ymax * (H - t0 - b0)
+    ligne = lambda ps: " ".join(f"{X(x):.1f},{Y(v):.1f}" for x, v in ps)
+    svg = "".join(f'<line x1="{g0}" x2="{W - d0}" y1="{Y(i * pas):.1f}" y2="{Y(i * pas):.1f}" stroke="#E6EEF7"/>'
+                  f'<text x="{g0 - 10}" y="{Y(i * pas) + 5:.1f}" text-anchor="end" font-size="13" fill="#5B6E93">{compact(i * pas) if i else 0}</text>'
+                  for i in range(4))
+    svg += "".join(f'<text x="{X(h):.1f}" y="{H - 8}" text-anchor="middle" font-size="13" fill="#5B6E93">{h % 24:02d}h</text>'
+                   for h in range(ouv, ferm + 1, 3))
+    communes = [h for h in finies if h in prev and h not in douteuses]
+    for h in sorted(douteuses):  # heures non comparables (données manquantes ou incomplètes) : bande grise
+        svg += f'<rect x="{X(h):.1f}" y="{t0}" width="{X(h + 1) - X(h):.1f}" height="{H - b0 - t0}" fill="#EEF2F8"/>'
+    if manque:
+        xs = [X(h + .5) for h in sorted(manque)]
+        svg += (f'<text x="{(xs[0] + xs[-1]) / 2:.1f}" y="{t0 + 16}" text-anchor="middle" font-size="12" fill="#5B6E93">données</text>'
+                f'<text x="{(xs[0] + xs[-1]) / 2:.1f}" y="{t0 + 31}" text-anchor="middle" font-size="12" fill="#5B6E93">manquantes</text>')
+    # morceaux continus (le réel est interrompu là où des données manquent)
+    def morceaux(hs):
+        out, cur = [], []
+        for h in hs:
+            if cur and h != cur[-1] + 1:
+                out.append(cur); cur = []
+            cur.append(h)
+        return out + ([cur] if cur else [])
+    for m in morceaux(communes):  # zone d'écart entre réel et prévision, sur les heures comparables
+        if len(m) > 1:
+            svg += (f'<polygon points="{ligne([(h + .5, reel.get(h, 0.0)) for h in m])} '
+                    f'{ligne([(h + .5, prev[h]) for h in reversed(m)])}" fill="#1B6EF3" opacity=".16"/>')
+    segs = [[(h + .5, reel.get(h, 0.0)) for h in m] for m in morceaux([h for h in finies if h not in manque])]
+    if len(r_pts) > sum(len(s) for s in segs):  # la dernière heure glissante prolonge le dernier morceau
+        (segs[-1] if segs and segs[-1][-1][0] >= r_pts[-1][0] - 1.5 else segs.append([]) or segs[-1]).append(r_pts[-1])
+    for s in segs:
+        if len(s) > 1:
+            svg += f'<polygon points="{X(s[0][0]):.1f},{Y(0):.1f} {ligne(s)} {X(s[-1][0]):.1f},{Y(0):.1f}" fill="#0B1F55" opacity=".06"/>'
+    if len(p_pts) > 1:
+        svg += f'<polyline points="{ligne(p_pts)}" fill="none" stroke="#1B6EF3" stroke-width="3.2" stroke-dasharray="9 7" stroke-linecap="round"/>'
+    for s in segs:
+        if len(s) > 1:
+            svg += f'<polyline points="{ligne(s)}" fill="none" stroke="#0B1F55" stroke-width="3.6" stroke-linejoin="round" stroke-linecap="round"/>'
+    svg += "".join(f'<circle cx="{X(x):.1f}" cy="{Y(v):.1f}" r="3.2" fill="#0B1F55"/>' for x, v in r_pts)
+    if h0.date() == J and ouv <= h0.hour < ferm:
+        xm = X((t_ref - minuit(J)).total_seconds() / 3600)
+        svg += (f'<line x1="{xm:.1f}" x2="{xm:.1f}" y1="{t0 - 8}" y2="{H - b0}" stroke="{ROUGE}" stroke-width="2"/>'
+                f'<rect x="{min(max(xm - 52, 0), W - 104):.1f}" y="{t0 - 32}" width="104" height="24" rx="7" fill="{ROUGE}"/>'
+                f'<text x="{min(max(xm, 52), W - 52):.1f}" y="{t0 - 15}" text-anchor="middle" font-size="13" font-weight="600" fill="#fff">Maintenant</text>')
+    if finies and any(reel.get(h, 0) > 0 for h in finies):
+        hp = max(finies, key=lambda h: reel.get(h, 0.0))
+        txt = f"Pic du jour · {hp % 24:02d}h · {nb(reel[hp])}"
+        lw = len(txt) * 7.2 + 16
+        xp, yp = X(hp + .5), Y(reel[hp])
+        gauche = xp + 14 + lw > W - d0
+        svg += (f'<circle cx="{xp:.1f}" cy="{yp:.1f}" r="6.5" fill="#0B1F55" stroke="#fff" stroke-width="2.5"/>'
+                f'<rect x="{xp - 14 - lw if gauche else xp + 14:.1f}" y="{yp - 14:.1f}" width="{lw:.0f}" height="26" rx="7" fill="#0B1F55"/>'
+                f'<text x="{(xp - 14 - lw / 2) if gauche else (xp + 14 + lw / 2):.1f}" y="{yp + 4:.1f}" text-anchor="middle" font-size="13" font-weight="500" fill="#fff">{txt}</text>')
+    # Écart moyen entre réel et prévu sur les heures terminées et comparables
+    tot = sum(reel.get(h, 0.0) for h in communes)
+    if communes and tot > 0:
+        err = sum(abs(reel.get(h, 0.0) - prev[h]) for h in communes) / tot * 100
+        biais = round((sum(prev[h] for h in communes) - tot) / tot * 100)  # < 0 : le modèle prévoit trop peu
+        sens_b = "juste en moyenne" if abs(biais) < 3 else f"prévision trop {'basse' if biais < 0 else 'haute'} de {abs(biais)} %"
+        t_prec = (f'<div><small>Écart moyen · heures écoulées</small><b class="n">{round(err)} %</b><span>{sens_b}</span></div>')
+    else:
+        t_prec = '<div><small>Écart moyen</small><b class="n">—</b><span>pas encore mesurable</span></div>'
+    suiv = P.get(h0 + timedelta(hours=1))
+    t_suiv = (f'<div><small>Prochaine heure · {(h0.hour + 1) % 24:02d}h</small><b class="n">{nb(suiv[0])}</b><span>entrées prévues</span></div>'
+              if suiv else '<div><small>Prochaine heure</small><b class="n">—</b><span>pas de prévision</span></div>')
+    futur = {t: v[0] for t, v in P.items() if h0 < t <= h0 + timedelta(hours=24)}
+    if futur:
+        tp = max(futur, key=futur.get)
+        quand = ("aujourd'hui" if tp.date() == J else "demain") + f" {tp:%H}h"
+        t_pic = f'<div><small>Prochain pic</small><b class="n">{nb(futur[tp])}</b><span>{quand}</span></div>'
+    else:
+        t_pic = '<div><small>Prochain pic</small><b class="n">—</b><span>pas de prévision</span></div>'
+    return f"""
+<div class="tvx-carte tvx-cb"><div class="tvx-ct">Réel vs prévision<small>entrées par heure</small>
+    <div class="tvx-lg"><span><u style="border-color:#0B1F55"></u>Réel</span><span><u style="border-color:#1B6EF3;border-top-style:dashed"></u>Prévision</span>
+      <span><u style="border-color:#1B6EF3;opacity:.25;border-top-width:9px"></u>Écart</span></div></div>
+  <div class="tvx-gr"><svg viewBox="0 0 {W} {H}" role="img" aria-label="Entrées réelles et prévues, heure par heure">{svg}</svg></div>
+  <div class="tvx-pv">{t_prec}{t_suiv}{t_pic}</div>
+</div>"""
+
+
+def html_tv_retenir(b: dict, G: list[str], a: dict | None) -> str:
+    """Bandeau « À retenir » : jusqu'à 3 faits calculés (hausse JOJ, tronçon le plus chargé, projection, sinon écart 2025 / gare n° 1)."""
+    faits = []
+    if a and a.get("hausses") and a["hausses"][0][1] > 0:
+        g, p, _ = a["hausses"][0]
+        faits.append(("courbe", "#E3F6EE", "#12915F", f'<b class="n up">+{p} %</b>', g, "plus forte hausse (JOJ)"))
+    try:  # tronçon le plus chargé : facultatif (pas d'erreur affichée si les horaires GTFS sont indisponibles)
+        d = charger_donnees()
+        ch = charge_reseau(d["maj"], b if REEL else None, d)
+        segs = ([(f"{NOMS[i]} → {NOMS[i + 1]}", ch["pct_a"][i]) for i in range(len(NOMS) - 1)]
+                + [(f"{NOMS[i + 1]} → {NOMS[i]}", ch["pct_r"][i]) for i in range(len(NOMS) - 1)])
+        nom, p = max(segs, key=lambda x: x[1])
+        if p > 0:
+            faits.append(("reseau", "#FDF1E3", "#C2570C", f'<b class="n" style="color:{niveau(p)}">{round(p)} %</b>', nom, "tronçon le plus chargé"))
+    except ErreurDonnees as e:
+        JOURNAL.warning("Écran TV : tronçon le plus chargé non affiché (%s)", e.titre)
+    if a and a["J"] <= JOJ_FIN and a["E"]["projection"]:
+        E = a["E"]
+        vs = f"{'+' if pct(E['projection'], E['normal_total']) > 0 else ''}{pct(E['projection'], E['normal_total'])} % vs période normale" if E["normal_total"] else "entrées sur la période"
+        faits.append(("trophee", "#F6E5EA", ROUGE, f'<b class="n">{compact(E["projection"])}</b>', "Projection fin des JOJ", vs))
+    if a and a["E"]["ecart_2025"] is not None and len(faits) < 3:
+        e = a["E"]["ecart_2025"]
+        faits.append(("groupe", "#E3F0FE", "#0A66F0", f'<b class="n {"up" if e >= 0 else "down"}">{"+" if e >= 0 else "−"}{compact(abs(e))}</b>', "Voyageurs vs 2025", "même période, à date"))
+    if len(faits) < 3:
+        jour = b["F"].get("jour", {})
+        vals = {g: _somme(jour, [g], "E") for g in G}
+        if vals and max(vals.values()) > 0:
+            g = max(vals, key=vals.get)
+            faits.append(("epingle", "#F6E5EA", ROUGE, f'<b class="n">{nb(vals[g])}</b>', g, "1re gare du jour (entrées)"))
+    if not faits:
+        faits.append(("info", "#EEF2F8", "#4A5F86", '<b class="n">—</b>', "Pas encore de fait marquant", "en attente de validations"))
+    return ('<div class="tvx-carte tvx-r">' + VAGUE_BAS + '<div class="tvx-et"><small>› À RETENIR</small><b>Faits du jour</b></div>' + "".join(
+        f'<div class="tvx-f"><span class="ic" style="background:{fond};color:{coul}">{ICO[ic]}</span>{v}<span><strong>{esc(t)}</strong>{esc(s)}</span></div>'
+        for ic, fond, coul, v, t, s in faits[:3]) + "</div>")
 
 
 # ═══════════════════════════════ Pages ═══════════════════════════════
@@ -2872,42 +3261,28 @@ def page_charge():
             st.rerun()
 
 
-def vue_tv() -> int:
-    """Vue affichée : fixée par l'adresse (?page=tv&vue=1 ou 2), sinon alternée toutes les TV_ROTATION secondes."""
-    fixe = str(st.query_params.get("vue") or ss.get("tv_vue") or "")
-    return int(fixe) - 1 if fixe in ("1", "2") else int(datetime.now().timestamp() // TV_ROTATION) % 2
-
-
-@st.fragment(run_every=f"{TV_ROTATION}s")
+@st.fragment(run_every=RAFRAICHISSEMENT)
 def page_tv():
-    """Écran mural (1920 × 1080, sans défilement) : mêmes indicateurs que la page Fréquentation, toutes les gares,
-    sans commandes. Deux vues en alternance, chacune avec les 4 indicateurs du haut :
-      1. gares les plus affluentes + résumé JOJ ;  2. top 5 entrées/sorties + prévision 24 h + charge par tronçon.
-    Les données viennent du cache partagé : l'alternance n'ajoute pas de requêtes SQL. Adresse directe : ?page=tv"""
-    vue = vue_tv()
+    """Écran mural synthétique, un seul affichage 1920 × 1080 sans défilement, toutes les gares, sans commandes :
+    4 grands chiffres · gares les plus affluentes (dernier lot) · top 5 du jour (cumul) · réel vs prévision · à retenir.
+    Adresse directe : ?page=tv"""
     try:
         b = freq_base()
     except ErreurDonnees as e:
-        md(html_tv_entete(maintenant(), etat_donnees(None, erreur=True), vue))
-        md(html_erreur(e.titre, e.detail, e.conseil))
+        md('<div class="tvx-w"><div class="tvx">' + html_tv_entete(maintenant(), etat_donnees(None, erreur=True))
+           + '<div class="tvx-err">' + html_erreur(e.titre, e.detail, e.conseil) + "</div></div></div>")
         return
     G = b["options"][TOUTES]
-    md(html_tv_entete(b["now"], etat_donnees(b), vue))
-    blocs = [f'<div class="tb-sim"><b>!</b><span>{esc(m)}</span></div>' for m in b["avert"]]
-    if not REEL:
-        blocs.append(html_bandeau_simule())
-    blocs.append(html_freq_cartes(b, G, TOUTES))
-    if vue == 0:
-        hero = sur(html_hero, b, G, TOUTES)
-        blocs.append(f'<div class="tb-g tb-g2j">{hero}{sur(html_joj, b, G, TOUTES)}</div>' if PARAM.joj_afficher else hero)
-    else:
-        blocs.append(f'<div class="tv-g2">{html_top5(b, G)}{sur(html_prevision, b, G, TOUTES)}</div>')
-        try:  # charge par tronçon : facultative sur l'écran TV (pas d'erreur affichée si le GTFS est indisponible)
-            d = charger_donnees()
-            blocs.append(html_serpent(charge_reseau(d["maj"], b if REEL else None, d), (1, -1)))
+    a = None
+    if PARAM.joj_afficher:
+        try:
+            a = joj_analyse(b, G)
         except ErreurDonnees as e:
-            JOURNAL.warning("Écran TV : charge par tronçon non affichée (%s)", e.titre)
-    md('<div class="tv-z">' + "".join(blocs) + "</div>")
+            JOURNAL.warning("Écran TV : analyses JOJ non affichées (%s)", e.titre)
+    md('<div class="tvx-w"><div class="tvx">' + html_tv_entete(b["now"], etat_donnees(b)) + '<div class="tvx-p">'
+       + html_tv_kpis(b, G, a)
+       + f'<div class="tvx-m">{sur(html_tv_gares, b, G)}{html_tv_cumul(b, G)}{sur(html_tv_prevision, b, G)}</div>'
+       + html_tv_retenir(b, G, a) + "</div></div></div>")
 
 
 st.markdown(f"<style>{CSS}</style>", unsafe_allow_html=True)
@@ -2918,6 +3293,7 @@ if ERREUR_PARAMETRES:  # réglage invalide : on le dit clairement, sans afficher
                    entete="Réglages à corriger"))
 elif ss.page == "tv":
     st.markdown(f"<style>{CSS_TV}</style>", unsafe_allow_html=True)
+    components.html(AJUSTE_TV, height=0)
     st.button("Quitter l'affichage TV", key="quitter_tv", on_click=aller, args=("frequentation",))
     page_tv()
 else:
