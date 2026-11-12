@@ -933,6 +933,15 @@ table.tb-tab { width: 100%; margin: 12px 0 0 !important; border-collapse: collap
 
 /* ── Infobulles des graphiques (CSS pur, sans JavaScript) ── */
 .tb-svg .hv .zone { fill: transparent; cursor: crosshair; }
+/* Infobulle des graphiques en HTML (barres, cases de la carte de chaleur, tronçons) : attribut data-tip */
+[data-tip] { position: relative; }
+[data-tip]:hover::after { content: attr(data-tip); position: absolute; z-index: 60; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%);
+  padding: 5px 9px; border-radius: 7px; background: #0B1F55; color: #fff; font: 600 11.5px/1.3 'Plus Jakarta Sans', sans-serif;
+  white-space: nowrap; pointer-events: none; box-shadow: 0 6px 16px rgba(11,31,85,.25); }
+[data-tip]:hover { filter: brightness(1.08); }
+.tb-barre[data-tip] { overflow: visible; } .tb-barre[data-tip] > span { border-radius: inherit; }
+.tb-spark .hv .zone { fill: transparent; } .tb-spark .hv .tip, .tb-spark .hv .gd { opacity: 0; pointer-events: none; }
+.tb-spark .hv:hover .tip, .tb-spark .hv:hover .gd { opacity: 1; } .tb-spark { overflow: visible; }
 .tb-svg .hv .tip, .tb-svg .hv .gd { opacity: 0; pointer-events: none; transition: opacity .08s; }
 .tb-svg .hv:hover .tip, .tb-svg .hv:hover .gd { opacity: 1; }
 .tb-svg .hv .tip text { font-size: 11px; }
@@ -1946,8 +1955,9 @@ def joj_message(a: dict) -> tuple[str, str, str]:
     return titre, " · ".join(morceaux) + ".", coul
 
 
-def svg_cumul(a: dict, W: int = 560, H: int = 190, points: bool = True) -> str:
-    """Fréquentation cumulée (entrées) : JOJ 2026 (réel puis prévu en pointillés), période normale, 2025."""
+def svg_cumul(a: dict, W: int = 560, H: int = 190, points: bool = True, valeur_jour: bool = False) -> str:
+    """Fréquentation cumulée (entrées) : JOJ 2026 (réel puis prévu en pointillés), période normale, 2025.
+    valeur_jour : écrit en clair le cumul à aujourd'hui (écran TV, où l'on ne survole pas)."""
     E, jours, J = a["E"], a["jours"], a["J"]
     n, nr = len(jours), a["nr"]
 
@@ -1993,6 +2003,12 @@ def svg_cumul(a: dict, W: int = 560, H: int = 190, points: bool = True) -> str:
         svg += (f'<line x1="{xa:.1f}" x2="{xa:.1f}" y1="{t0}" y2="{H - b0}" stroke="{ROUGE}" stroke-dasharray="3 3"/>'
                 f'<rect x="{xa - 34:.1f}" y="{t0 - 2}" width="68" height="16" rx="4" fill="{ROUGE}"/>'
                 f'<text x="{xa:.1f}" y="{t0 + 9.5}" text-anchor="middle" fill="#fff" font-weight="700" font-size="10">Aujourd\'hui</text>')
+    if valeur_jour and nr:
+        xv, yv = X(nr - 1), Y(cj[nr - 1])
+        txt = compact(cj[nr - 1])
+        lw = len(txt) * 7 + 14
+        svg += (f'<rect x="{xv - lw / 2:.1f}" y="{yv - 30:.1f}" width="{lw:.0f}" height="20" rx="5" fill="{ROUGE}"/>'
+                f'<text x="{xv:.1f}" y="{yv - 16:.1f}" text-anchor="middle" fill="#fff" font-weight="600" font-size="12">{txt}</text>')
     fins = sorted([(Y(cj[-1]), ROUGE, cj[-1])] + ([(Y(cn[-1]), "#1B6EF3", cn[-1])] if cn else [])
                   + ([(Y(c1[-1]), "#7F93B3", c1[-1])] if c1 else []))
     ys: list[float] = []
@@ -2145,8 +2161,10 @@ def svg_profil(a: dict, W: int = 380, H: int = 210) -> str:
             f'font-family="Plus Jakarta Sans, sans-serif" role="img" aria-label="Profil horaire moyen">{svg}</svg>')
 
 
-def sparkline(ratios: list, coul: str, W: int = 150, H: int = 38) -> str:
-    v = [r for r in ratios if r is not None]
+def sparkline(ratios: list, coul: str, W: int = 150, H: int = 38, jours: list | None = None) -> str:
+    """Mini-courbe (rapport au jour normal, 1 = normal) ; avec « jours », une infobulle par point au survol."""
+    pts = [(jours[i] if jours and i < len(jours) else None, r) for i, r in enumerate(ratios) if r is not None]
+    v = [r for _, r in pts]
     if len(v) < 2:
         return ""
     lo, hi = min(v + [1]) * .97, max(v + [1]) * 1.03
@@ -2154,7 +2172,10 @@ def sparkline(ratios: list, coul: str, W: int = 150, H: int = 38) -> str:
     Y = lambda r: H - 3 - (r - lo) / ((hi - lo) or 1) * (H - 6)
     return (f'<svg class="tb-spark" viewBox="0 0 {W} {H}" aria-hidden="true">'
             f'<line x1="0" x2="{W}" y1="{Y(1):.1f}" y2="{Y(1):.1f}" stroke="#C9D6E8" stroke-dasharray="3 3"/>'
-            f'<path d="M{" L".join(f"{X(i):.1f},{Y(r):.1f}" for i, r in enumerate(v))}" fill="none" stroke="{coul}" stroke-width="2.2"/></svg>')
+            f'<path d="M{" L".join(f"{X(i):.1f},{Y(r):.1f}" for i, r in enumerate(v))}" fill="none" stroke="{coul}" stroke-width="2.2"/>'
+            + "".join(survol(X(i), (W - 4) / (len(v) - 1) / 2, 0, H, W, f"{j:%d/%m}" if j else f"Jour {i + 1}",
+                             [(coul, "vs normal", f"{'+' if r >= 1 else '−'}{abs(round((r - 1) * 100))} %")]) for i, (j, r) in enumerate(pts))
+            + "</svg>")
 
 
 def html_joj_kpis(a: dict) -> str:
@@ -2189,7 +2210,7 @@ def html_joj_es(a: dict) -> str:
         v = X["vs_normal"]
         return (f'<div class="tb-je" style="background:{fond}"><small>{lib}</small>'
                 f'<b style="color:{coul}">{("+" if v > 0 else "") + str(v) + " %" if v is not None else "—"}</b>'
-                f'<span>vs normal, à date · {nb(X["R"])}</span>{sparkline(a["ratios"][s], coul)}</div>')
+                f'<span>vs normal, à date · {nb(X["R"])}</span>{sparkline(a["ratios"][s], coul, jours=a["jours"])}</div>')
     return (f'<div class="tb-card tb-pad"><div class="tb-jt">{ICO["fleches"]}Entrées vs sorties</div>'
             f'<div class="tb-je-g">{bloc("E", "Entrées", "#12915F", "#F0FAF5")}{bloc("S", "Sorties", "#1B6EF3", "#F0F6FE")}</div>'
             f'<div class="tb-jn">Courbes : chaque jour des Jeux rapporté à un jour normal (pointillé = normal).</div></div>')
@@ -2202,7 +2223,7 @@ def html_joj_pics(a: dict) -> str:
             return f'<div class="tb-jp"><small>{lib}</small><b>—</b></div>'
         return (f'<div class="tb-jp"><small>{lib}</small><b>{p[0]:02d}h – {(p[0] + 1) % 24:02d}h</b>'
                 f'<span>≈ {round(p[1])} % du total du jour</span>'
-                f'<span class="tb-barre"><span style="width:{min(100, p[1] * 4):.0f}%;background:{coul}"></span></span></div>')
+                f'<span class="tb-barre" data-tip="{lib} · pic {p[0]:02d}h–{(p[0] + 1) % 24:02d}h · {round(p[1])} % du jour"><span style="width:{min(100, p[1] * 4):.0f}%;background:{coul}"></span></span></div>')
     return (f'<div class="tb-card tb-pad"><div class="tb-jt">{ICO["horloge"]}Pics de fréquentation <span>(jour moyen des JOJ)</span></div>'
             f'<div class="tb-je-g">{bloc("E", "Entrées", "#17A97B")}{bloc("S", "Sorties", "#1E87FC")}</div></div>')
 
@@ -2217,7 +2238,7 @@ def html_joj_gares(a: dict) -> str:
     lignes = "".join(
         f'<div class="tb-jg"><span class="r">{i + 1}.</span><span class="nm" title="{esc(g)}">{esc(g)}</span>'
         f'<b class="{"up" if p >= 0 else "down"}">{"+" if p > 0 else ""}{p} %</b>'
-        f'<span class="tb-barre"><span style="width:{abs(p) / mx * 100:.0f}%;background:{"#D46A86" if p >= 0 else "#9AABC6"}"></span></span>'
+        f'<span class="tb-barre" data-tip="{esc(g)} · {"+" if p > 0 else ""}{p} % vs normal · {"+" if v >= 0 else "−"}{nb(abs(v))} voyageurs"><span style="width:{abs(p) / mx * 100:.0f}%;background:{"#D46A86" if p >= 0 else "#9AABC6"}"></span></span>'
         f'<small>{"+" if v >= 0 else "−"}{nb(abs(v))} voyageurs</small></div>' for i, (g, p, v) in enumerate(top))
     return (f'<div class="tb-card tb-pad"><div class="tb-jt">{ICO["trophee"]}Top gares <span>(hausse des entrées vs normal)</span></div>'
             f'{lignes}</div>')
@@ -2415,7 +2436,7 @@ def html_top5(b: dict, G: list[str]) -> str:
         lignes = "".join(
             f'<div class="tb-t5"><span class="tb-rang" style="background:{RANGS[i]}">{i + 1}</span>'
             f'<span class="nm" title="{esc(g)}">{esc(g)}</span>'
-            f'<div class="tb-t5-b"><span class="tb-barre"><span style="width:{vals[g] / mx * 100:.0f}%;background:{coul}"></span></span>'
+            f'<div class="tb-t5-b"><span class="tb-barre" data-tip="{esc(g)} · {libelle.lower()} : {nb(vals[g])} ({round(vals[g] / total * 100)} %)"><span style="width:{vals[g] / mx * 100:.0f}%;background:{coul}"></span></span>'
             f'<b>{nb(vals[g])}</b><small>{round(vals[g] / total * 100)} %</small></div></div>'
             for i, g in enumerate(top))
         return (f'<div class="tb-t5-col"><div class="tb-t5 tb-t5-h"><span>Rang</span><span>Gare</span>'
@@ -2438,10 +2459,10 @@ def html_flux(b: dict, G: list[str]) -> str:
               '<span><i style="background:#1E87FC"></i>Sorties</span></div></div>')
     if len(G) > 8:  # nombreuses gares : barres horizontales, une ligne par gare (noms lisibles)
         mx = max(list(e.values()) + list(s.values()) + [1])
-        barre = lambda v, c: (f'<div><span class="tb-barre"><span style="width:{v / mx * 100:.1f}%;background:{c}"></span></span>'
-                              f'<b>{nb(v)}</b></div>')
+        barre = lambda v, c, tip: (f'<div><span class="tb-barre" data-tip="{tip}"><span style="width:{v / mx * 100:.1f}%;background:{c}"></span></span>'
+                                   f'<b>{nb(v)}</b></div>')
         lignes = "".join(f'<div class="tb-fh-r"><span class="nm" title="{esc(g)}">{esc(g)}</span>'
-                         f'{barre(e[g], "#17A97B")}{barre(s[g], "#1E87FC")}</div>' for g in G)
+                         f'{barre(e[g], "#17A97B", f"{esc(g)} · entrées : {nb(e[g])}")}{barre(s[g], "#1E87FC", f"{esc(g)} · sorties : {nb(s[g])}")}</div>' for g in G)
         return (f'<div class="tb-card tb-pad">{entete}<div class="tb-fh">'
                 '<div class="tb-fh-r tb-fh-h"><span>Gare</span><span>Entrées</span><span>Sorties</span></div>'
                 f'{lignes}</div></div>')
@@ -2450,8 +2471,8 @@ def html_flux(b: dict, G: list[str]) -> str:
     grille = "".join(f'<div class="tb-gl" style="bottom:{i * 25}%"><span>{nb(i * pas)}</span></div>' for i in range(5))
     cols = f"grid-template-columns:repeat({len(G)},minmax(0,1fr))"
     barres = "".join(
-        f'<div class="tb-grp"><i style="height:{e[g] / haut * 100:.1f}%;background:#17A97B" title="{esc(g)} · entrées : {nb(e[g])}"></i>'
-        f'<i style="height:{s[g] / haut * 100:.1f}%;background:#1E87FC" title="{esc(g)} · sorties : {nb(s[g])}"></i></div>' for g in G)
+        f'<div class="tb-grp"><i style="height:{e[g] / haut * 100:.1f}%;background:#17A97B" data-tip="{esc(g)} · entrées : {nb(e[g])}"></i>'
+        f'<i style="height:{s[g] / haut * 100:.1f}%;background:#1E87FC" data-tip="{esc(g)} · sorties : {nb(s[g])}"></i></div>' for g in G)
     noms = "".join(f'<span>{esc(g)}</span>' for g in G)
     return f"""
 <div class="tb-card tb-pad">
@@ -2499,10 +2520,10 @@ def html_heatmap(b: dict, G: list[str], mode: str) -> str:
         cases += f"<span>{jour}</span>"
         for h, v in zip(HE, M[js]):
             if v < .5 and not o <= h < f:
-                cases += f'<i class="ferme" title="{jour} {h}h · fermé"></i>'
+                cases += f'<i class="ferme" data-tip="{jour} {h}h · fermé"></i>'
                 continue
             vif = ";outline:2px solid #0B1F55;outline-offset:1px" if (js, h) == (now.weekday(), now.hour) else ""
-            cases += f'<i style="background:{couleur_echelle(v / mx)}{vif}" title="{jour} {h}h · {nb(v)} {unite}/h en moyenne"></i>'
+            cases += f'<i style="background:{couleur_echelle(v / mx)}{vif}" data-tip="{jour} {h}h · {nb(v)} {unite}/h en moyenne"></i>'
     cases += "<span></span>" + "".join(f'<span class="hx">{h}h</span>' if h % 2 else "<span></span>" for h in HE)
     leg = "".join(f'<span><i style="background:{couleur_echelle(v)}"></i>{n}</span>'
                   for n, v in (("Faible", .1), ("Modérée", .45), ("Élevée", .75), ("Très élevée", 1)))
@@ -2545,7 +2566,7 @@ def html_serpent(ch: dict, sens_vis: tuple) -> str:
 
     def rangee(lib, pcts, flux):
         return f'<div class="s">{lib}</div>' + "".join(
-            f'<div class="c" title="{nb(v)} voyageurs/h · {round(p)} %"><i style="background:{niveau(p)}"></i>'
+            f'<div class="c" data-tip="{nb(v)} voyageurs/h · {round(p)} %"><i style="background:{niveau(p)}"></i>'
             f'<small>{round(p)} %{"" if dense else f" · {nb(v)} voy./h"}</small></div>'
             for p, v in zip(pcts, flux))
 
@@ -2555,7 +2576,7 @@ def html_serpent(ch: dict, sens_vis: tuple) -> str:
     return f"""
 <div class="tb-card tb-pad">
   <div class="tb-ch"><div class="tb-ct">Charge par tronçon <span>(dernière fenêtre validée · 60 min)</span></div>
-    <span class="tb-ctrl-t">Offre : {dec(ch["freq"])} trains/h par sens × {CAPACITE_RAME} places{" · survoler un tronçon pour les voyageurs/h" if dense else ""}</span></div>
+    <span class="tb-ctrl-t">Offre : {dec(ch["freq"])} trains/h par sens × {CAPACITE_RAME} places{" · survoler un tronçon pour le détail" if dense else ""}</span></div>
   <div class="tb-serp" style="{grille}"><div></div><div class="noms{" dense" if dense else ""}">{etiquettes}</div>{rangs}</div>
 </div>"""
 
@@ -2567,7 +2588,7 @@ def html_detail_charge(trains: list[dict], charges: dict) -> str:
         s, c = statut(t)
         lignes += (f'<tr><td><span class="tb-tag" style="background:{t["couleur"]}">{t["id"]}</span></td><td class="lg">{ligne(t)}</td>'
                    f'<td>{t["position"]}</td><td>{t["prochain"]}</td><td style="font-weight:600">{nb(voy)}</td>'
-                   f'<td><div class="tb-cg"><span class="tb-barre"><span style="width:{min(p, 100):.0f}%;background:{niveau(p)}"></span></span>'
+                   f'<td><div class="tb-cg"><span class="tb-barre" data-tip="Train {t["id"]} · {nb(voy)} voyageurs · {round(p)} %"><span style="width:{min(p, 100):.0f}%;background:{niveau(p)}"></span></span>'
                    f'<b>{round(p)} %</b></div></td><td><span class="tb-st {c}">{ICO["train"]}{s}</span></td></tr>')
     if not trains:
         lignes = '<tr><td colspan="7" style="text-align:center;color:#5B6E93">Aucun train ne correspond au filtre.</td></tr>'
@@ -2583,9 +2604,9 @@ def html_detail_charge(trains: list[dict], charges: dict) -> str:
 
 def html_montees(ch: dict) -> str:
     mx = max(ch["E"] + ch["S"]) or 1
-    barre = lambda v, c: (f'<div class="tb-md-c"><span class="tb-barre"><span style="width:{v / mx * 100:.0f}%;background:{c}"></span></span>'
-                          f'<b>{nb(v)}</b></div>')
-    rangs = "".join(f'<div class="tb-md"><span>{n}</span>{barre(e, "#17A97B")}{barre(s, "#1E87FC")}</div>'
+    barre = lambda v, c, tip: (f'<div class="tb-md-c"><span class="tb-barre" data-tip="{tip}"><span style="width:{v / mx * 100:.0f}%;background:{c}"></span></span>'
+                               f'<b>{nb(v)}</b></div>')
+    rangs = "".join(f'<div class="tb-md"><span>{n}</span>{barre(e, "#17A97B", f"{esc(n)} · montées : {nb(e)}")}{barre(s, "#1E87FC", f"{esc(n)} · descentes : {nb(s)}")}</div>'
                     for n, e, s in zip(NOMS, ch["E"], ch["S"]))
     return ('<div class="tb-card tb-pad"><div class="tb-ct">Montées / descentes <span>(fenêtre validée de 60 min)</span></div>'
             '<div class="tb-md tb-md-t"><span></span><span>Montées</span><span>Descentes</span></div>' + rangs + '</div>')
@@ -2641,7 +2662,7 @@ CSS_TV = r"""
 .tvx-p { display: grid; grid-template-rows: 172px minmax(0, 1fr) 104px; gap: 16px; height: 968px; padding: 18px 24px 20px; }
 .tvx-carte { background: #fff; border: 1px solid #EBF1F8; border-radius: 16px; box-shadow: 0 1px 2px rgba(16,42,90,.04), 0 6px 18px rgba(16,42,90,.05); }
 .tvx-ct { display: flex; align-items: baseline; gap: 12px; font-size: 20px; font-weight: 700; white-space: nowrap; }
-.tvx-ct small { font-size: 14px; font-weight: 400; color: #22396E; }
+.tvx-ct small { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 400; color: #22396E; }
 /* 4 indicateurs : pastille ronde colorée + valeur + mini-courbe, comme les cartes de la page Fréquentation */
 .tvx-k { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .tvx-kt { position: relative; display: flex; gap: 18px; padding: 22px 24px; min-width: 0; overflow: hidden; }
@@ -2654,14 +2675,14 @@ CSS_TV = r"""
 .tvx-kv u { text-decoration: none; margin-left: 8px; font-size: 18px; color: #4A5F86; }
 .tvx-kd { display: flex; align-items: center; gap: 8px; font-size: 15px; color: #22396E; white-space: nowrap; overflow: hidden; }
 .tvx-kd .ch { padding: 3px 10px; border-radius: 999px; font-weight: 600; }
-.tvx-sp { position: absolute; right: 22px; top: 62px; }
+.tvx-sp { position: absolute; right: 22px; top: 62px; overflow: visible; }
 .ch.up { background: #E3F6EE; color: #12915F; } .ch.down { background: #FBE9ED; color: #7D142F; } .ch.eq { background: #EEF2F8; color: #4A5F86; }
 .tvx .up { color: #12915F; } .tvx .down { color: #7D142F; } .tvx .eq { color: #4A5F86; }
 .tvx-kt.fort { border: 0; color: #fff; background: radial-gradient(120% 120% at 100% 0%, #9B2347 0%, #7D142F 45%, #63102A 100%); box-shadow: 0 10px 26px rgba(125,20,47,.22); }
 .tvx-kt.fort .tvx-ic { background: rgba(255,255,255,.16); color: #fff; } 
 .tvx-kt > .tvx-ic, .tvx-kt > .tvx-kx { position: relative; }
 .tvx-kt.fort .tvx-kl em, .tvx-kt.fort .tvx-kd { color: #F5DCE3; } .tvx-kt.fort .tvx-kv u { color: #F5DCE3; }
-.tvx-m { display: grid; grid-template-columns: 1.46fr .8fr 1.2fr; gap: 16px; min-height: 0; }
+.tvx-m { display: grid; grid-template-columns: minmax(0, 1.46fr) minmax(0, .8fr) minmax(0, 1.2fr); gap: 16px; min-height: 0; }
 /* Gares les plus affluentes : même bloc que la page Fréquentation */
 .tvx-bloc { position: relative; overflow: hidden; display: flex; flex-direction: column; min-height: 0; padding: 18px 20px 16px; border-radius: 18px; color: #fff;
   background: radial-gradient(120% 90% at 100% 0%, #9B2347 0%, #7D142F 45%, #63102A 100%); box-shadow: 0 8px 22px rgba(125,20,47,.18); }
@@ -2709,7 +2730,11 @@ CSS_TV = r"""
 .tvx-lg { display: flex; gap: 16px; margin-left: auto; font-size: 13px; font-weight: 500; color: #22396E; }
 .tvx-lg span { display: flex; align-items: center; gap: 7px; } .tvx-lg u { width: 26px; height: 0; border-top: 3px solid; }
 .tvx-gr { flex: 1; min-height: 0; margin-top: 6px; }
-.tvx-gr svg { display: block; width: 100%; height: 100%; }
+.tvx-gr { display: flex; flex-direction: column; }
+.tvx-gr > svg { display: block; flex: 1; min-height: 0; width: 100%; height: auto; }
+.tvx-gr .tb-jl { flex: none; display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 6px; font-size: 13.5px; color: #22396E; }
+.tvx-gr .tb-jl span { display: inline-flex; align-items: center; gap: 7px; } .tvx-gr .tb-jl i { width: 22px; height: 4px; border-radius: 2px; }
+.tvx-gr .tb-jl em { font-style: normal; color: #5B6E93; }
 .tvx-pv { display: grid; grid-template-columns: 1.25fr 1fr 1fr; gap: 10px; margin-top: 8px; }
 .tvx-pv > div { min-width: 0; padding: 10px 14px; border-radius: 12px; background: #F3F8FE; border: 1px solid #E1ECFA; }
 .tvx-pv small { display: block; font-size: 12.5px; font-weight: 600; color: #1B3266; white-space: nowrap; }
@@ -2776,7 +2801,7 @@ def html_tv_entete(maj: datetime, etat: tuple[str, str] | None = None) -> str:
   <div class="tvx-t"><b>Fréquentation des gares</b><span>TER Dakar ↔ AIBD · l'essentiel en temps réel</span></div>
   <div class="tvx-live"><div class="tvx-live-l"><i style="background:{coul};box-shadow:0 0 0 4px {coul}29"></i>{esc(libelle)}</div>
     <div class="tvx-live-d">{CAL_TV}<span>{date_fr(maj)}</span></div></div>
-  {f'<div class="tvx-joj">JOJ Dakar 2026 · {statut_joj(maj.date())}</div>' if PARAM.joj_afficher else ""}
+  {f'<div class="tvx-joj">JOJ Dakar 2026 · {statut_joj(maj.date())}</div>' if PARAM.joj_afficher and JOJ_DEBUT <= maj.date() <= JOJ_FIN else ""}
   <div class="tvx-clock"><b>{maj:%H:%M}</b><span>heure de mise à jour</span></div><div class="tvx-sep"></div>
   {_img_tag("banniere_dakar2026_fondu.png", "banniere")}
 </div>"""
@@ -2789,17 +2814,23 @@ def _tv_var(v: int | None, texte: str) -> str:
     return f'<span class="ch {cls}">{fl} {"+" if v > 0 else ("−" if v < 0 else "")}{abs(v)} %</span><span>{texte}</span>'
 
 
-def _tv_spark(vals: list[float], coul: str, W: int = 132, H: int = 44) -> str:
-    """Mini-courbe de tendance (aire dégradée), affichée à droite d'un indicateur."""
+def _tv_spark(vals: list[float], coul: str, W: int = 132, H: int = 44, pic: bool = False) -> str:
+    """Mini-courbe de tendance (aire dégradée), affichée à droite d'un indicateur ; pic=True écrit la valeur du pic."""
     if len(vals) < 2 or max(vals) <= 0:
         return ""
     m = max(vals)
     p = " ".join(f"{i * W / (len(vals) - 1):.1f},{H - 3 - v / m * (H - 8):.1f}" for i, v in enumerate(vals))
+    etiq = ""
+    if pic:
+        i = vals.index(m)
+        xp = i * W / (len(vals) - 1)
+        etiq = (f'<circle cx="{xp:.1f}" cy="5" r="3" fill="{coul}"/>'
+                f'<text x="{min(max(xp, 22), W - 22):.1f}" y="-4" text-anchor="middle" font-size="11" font-weight="600" fill="{coul}">{compact(m)}</text>')
     gid = "sp" + coul.lstrip("#")
     return (f'<svg class="tvx-sp" width="{W}" height="{H}" viewBox="0 0 {W} {H}"><defs><linearGradient id="{gid}" x1="0" y1="0" x2="0" y2="1">'
             f'<stop offset="0" stop-color="{coul}" stop-opacity=".28"/><stop offset="1" stop-color="{coul}" stop-opacity="0"/></linearGradient></defs>'
             f'<polygon points="0,{H} {p} {W},{H}" fill="url(#{gid})"/><polyline points="{p}" fill="none" stroke="{coul}" stroke-width="2.5" '
-            f'stroke-linejoin="round" stroke-linecap="round"/></svg>')
+            f'stroke-linejoin="round" stroke-linecap="round"/>{etiq}</svg>')
 
 
 def _tv_horaire(b: dict, G: list[str]) -> dict:
@@ -2853,7 +2884,7 @@ def html_tv_kpis(b: dict, G: list[str], a: dict | None) -> str:
               _tv_spark([0.0] + cumul(1), "#0A6CF5")),
         tuile("groupe", "#E3F0FE", "#0A66F0", "Voyageurs", "dernière heure reçue", nb(rythme),
               _tv_var(pct(rythme, habituel), "vs semaine habituelle") if habituel else "<span>pas de référence habituelle</span>",
-              _tv_spark([hor[h][0] for h in heures] + [rythme], "#0A66F0"))]
+              _tv_spark([hor[h][0] for h in heures] + [rythme], "#0A66F0", pic=True))]
     Ej = a["E"] if a else None
     if Ej and a["dans_jeux"] and Ej["vs_normal"] is not None:
         v = Ej["vs_normal"]
@@ -2911,121 +2942,161 @@ def html_tv_cumul(b: dict, G: list[str]) -> str:
             f'{classement("E", "Entrées", TV_ENTREE, "entree")}{classement("S", "Sorties", TV_SORTIE, "sortie")}</div>')
 
 
-def html_tv_prevision(b: dict, G: list[str]) -> str:
-    """Entrées du jour heure par heure : le réel superposé à la prévision, pour juger le modèle.
-    Précision = 100 % − (somme des écarts |réel − prévu| des heures terminées) / (total réel de ces heures)."""
-    t_ref, J = b["t_ref"], b["J"]
-    h0 = t_ref.replace(minute=0, second=0, microsecond=0)
-    ouv, ferm = b["ouv"], b["ferm"] if b["ferm"] > b["ouv"] else 24
-    heures = list(range(ouv, ferm))
-    df = d_horaire_recent(b["cle"], minuit(J), b["t_sup"])
-    reel = {}
-    if not df.empty:
-        d = df[(df["sens"] == "E") & df["gare"].isin(list(G))]
-        if "jour" in d.columns:
-            d = d[d["jour"] == J]
-        reel = {int(h): float(v) for h, v in d.groupby("heure")["nb"].sum().items()}
-    P = previsions_par_heure(b, G)
-    prev = {h: P[minuit(J) + timedelta(hours=h)][0] for h in heures if minuit(J) + timedelta(hours=h) in P}
-    finies = [h for h in heures if h < h0.hour] if h0.date() == J else heures  # heures entièrement reçues
-    # Trou de chargement : heure sans aucune validation alors que le modèle en attend ; ses voisines sont
-    # probablement incomplètes (lot de 30 min manquant). Elles sont exclues de la précision et grisées.
-    manque = {h for h in finies if reel.get(h, 0) <= 0 and prev.get(h, 0) >= 50}
-    douteuses = manque | {h + d for h in manque for d in (-1, 1) if h + d in finies}
-    r_pts = [(h + .5, reel.get(h, 0.0)) for h in finies if h not in manque]
-    rythme = _somme(b["F"].get("m60", {}), G, "E")
-    if h0.date() == J and ouv <= h0.hour < ferm and b.get("du_jour"):
-        r_pts.append(((t_ref - minuit(J)).total_seconds() / 3600 - .5, rythme))  # dernière heure glissante reçue
-    p_pts = [(h + .5, v) for h, v in sorted(prev.items())]
-    vmax = max([v for _, v in r_pts + p_pts] + [1])
-    pas = graduation(vmax * 1.12, 3)
-    ymax = pas * 3
-    W, H, g0, d0, t0, b0 = 600, 400, 50, 16, 40, 30
-    X = lambda x: g0 + (x - ouv) / max(ferm - ouv, 1) * (W - g0 - d0)
-    Y = lambda v: H - b0 - v / ymax * (H - t0 - b0)
-    ligne = lambda ps: " ".join(f"{X(x):.1f},{Y(v):.1f}" for x, v in ps)
-    svg = "".join(f'<line x1="{g0}" x2="{W - d0}" y1="{Y(i * pas):.1f}" y2="{Y(i * pas):.1f}" stroke="#E6EEF7"/>'
-                  f'<text x="{g0 - 10}" y="{Y(i * pas) + 5:.1f}" text-anchor="end" font-size="13" fill="#5B6E93">{compact(i * pas) if i else 0}</text>'
-                  for i in range(4))
-    svg += "".join(f'<text x="{X(h):.1f}" y="{H - 8}" text-anchor="middle" font-size="13" fill="#5B6E93">{h % 24:02d}h</text>'
-                   for h in range(ouv, ferm + 1, 3))
-    communes = [h for h in finies if h in prev and h not in douteuses]
-    for h in sorted(douteuses):  # heures non comparables (données manquantes ou incomplètes) : bande grise
-        svg += f'<rect x="{X(h):.1f}" y="{t0}" width="{X(h + 1) - X(h):.1f}" height="{H - b0 - t0}" fill="#EEF2F8"/>'
-    if manque:
-        xs = [X(h + .5) for h in sorted(manque)]
-        svg += (f'<text x="{(xs[0] + xs[-1]) / 2:.1f}" y="{t0 + 16}" text-anchor="middle" font-size="12" fill="#5B6E93">données</text>'
-                f'<text x="{(xs[0] + xs[-1]) / 2:.1f}" y="{t0 + 31}" text-anchor="middle" font-size="12" fill="#5B6E93">manquantes</text>')
-    # morceaux continus (le réel est interrompu là où des données manquent)
-    def morceaux(hs):
-        out, cur = [], []
-        for h in hs:
-            if cur and h != cur[-1] + 1:
-                out.append(cur); cur = []
-            cur.append(h)
-        return out + ([cur] if cur else [])
-    for m in morceaux(communes):  # zone d'écart entre réel et prévision, sur les heures comparables
-        if len(m) > 1:
-            svg += (f'<polygon points="{ligne([(h + .5, reel.get(h, 0.0)) for h in m])} '
-                    f'{ligne([(h + .5, prev[h]) for h in reversed(m)])}" fill="#1B6EF3" opacity=".16"/>')
-    segs = [[(h + .5, reel.get(h, 0.0)) for h in m] for m in morceaux([h for h in finies if h not in manque])]
-    if len(r_pts) > sum(len(s) for s in segs):  # la dernière heure glissante prolonge le dernier morceau
-        (segs[-1] if segs and segs[-1][-1][0] >= r_pts[-1][0] - 1.5 else segs.append([]) or segs[-1]).append(r_pts[-1])
-    for s in segs:
-        if len(s) > 1:
-            svg += f'<polygon points="{X(s[0][0]):.1f},{Y(0):.1f} {ligne(s)} {X(s[-1][0]):.1f},{Y(0):.1f}" fill="#0B1F55" opacity=".06"/>'
-    if len(p_pts) > 1:
-        svg += f'<polyline points="{ligne(p_pts)}" fill="none" stroke="#1B6EF3" stroke-width="3.2" stroke-dasharray="9 7" stroke-linecap="round"/>'
-    for s in segs:
-        if len(s) > 1:
-            svg += f'<polyline points="{ligne(s)}" fill="none" stroke="#0B1F55" stroke-width="3.6" stroke-linejoin="round" stroke-linecap="round"/>'
-    svg += "".join(f'<circle cx="{X(x):.1f}" cy="{Y(v):.1f}" r="3.2" fill="#0B1F55"/>' for x, v in r_pts)
-    if h0.date() == J and ouv <= h0.hour < ferm:
-        xm = X((t_ref - minuit(J)).total_seconds() / 3600)
-        svg += (f'<line x1="{xm:.1f}" x2="{xm:.1f}" y1="{t0 - 8}" y2="{H - b0}" stroke="{ROUGE}" stroke-width="2"/>'
-                f'<rect x="{min(max(xm - 52, 0), W - 104):.1f}" y="{t0 - 32}" width="104" height="24" rx="7" fill="{ROUGE}"/>'
-                f'<text x="{min(max(xm, 52), W - 52):.1f}" y="{t0 - 15}" text-anchor="middle" font-size="13" font-weight="600" fill="#fff">Maintenant</text>')
-    if finies and any(reel.get(h, 0) > 0 for h in finies):
-        hp = max(finies, key=lambda h: reel.get(h, 0.0))
-        txt = f"Pic du jour · {hp % 24:02d}h · {nb(reel[hp])}"
-        lw = len(txt) * 7.2 + 16
-        xp, yp = X(hp + .5), Y(reel[hp])
-        gauche = xp + 14 + lw > W - d0
-        svg += (f'<circle cx="{xp:.1f}" cy="{yp:.1f}" r="6.5" fill="#0B1F55" stroke="#fff" stroke-width="2.5"/>'
-                f'<rect x="{xp - 14 - lw if gauche else xp + 14:.1f}" y="{yp - 14:.1f}" width="{lw:.0f}" height="26" rx="7" fill="#0B1F55"/>'
-                f'<text x="{(xp - 14 - lw / 2) if gauche else (xp + 14 + lw / 2):.1f}" y="{yp + 4:.1f}" text-anchor="middle" font-size="13" font-weight="500" fill="#fff">{txt}</text>')
-    # Écart moyen entre réel et prévu sur les heures terminées et comparables
-    tot = sum(reel.get(h, 0.0) for h in communes)
-    if communes and tot > 0:
-        err = sum(abs(reel.get(h, 0.0) - prev[h]) for h in communes) / tot * 100
-        biais = round((sum(prev[h] for h in communes) - tot) / tot * 100)  # < 0 : le modèle prévoit trop peu
-        sens_b = "juste en moyenne" if abs(biais) < 3 else f"prévision trop {'basse' if biais < 0 else 'haute'} de {abs(biais)} %"
-        t_prec = (f'<div><small>Écart moyen · heures écoulées</small><b class="n">{round(err)} %</b><span>{sens_b}</span></div>')
+def html_tv_evolution(b: dict, G: list[str], a: dict | None) -> str:
+    """Évolution cumulée de la fréquentation (entrées).
+    Pendant les JOJ : le cumul depuis le début des Jeux (même graphique que la page Fréquentation).
+    En dehors : le cumul d'aujourd'hui puis sa projection sur les 24 prochaines heures (table des prévisions)."""
+    if a and a["dans_jeux"]:
+        E = a["E"]
+        vs = E["vs_normal"]
+        tuiles = [
+            ("Cumul depuis le " + f"{JOJ_DEBUT:%d/%m}", nb(E["R"]), f"{'+' if (vs or 0) > 0 else ''}{vs} % vs période normale" if vs is not None else "entrées"),
+            ("Écart vs 2025", (f"{'+' if E['ecart_2025'] >= 0 else '−'}{compact(abs(E['ecart_2025']))}" if E["ecart_2025"] is not None else "—"),
+             f"voyageurs ({'+' if (E['vs_2025'] or 0) > 0 else ''}{E['vs_2025']} %)" if E["ecart_2025"] is not None else "pas de données 2025"),
+            ("Projection fin des JOJ", compact(E["projection"]) if E["projection"] else "—", "réel + prévisions")]
+        corps = (svg_cumul(a, W=470, H=290, valeur_jour=True) + legende_cumul(a))
+        sous = f"entrées depuis le {JOJ_DEBUT:%d/%m}"
     else:
-        t_prec = '<div><small>Écart moyen</small><b class="n">—</b><span>pas encore mesurable</span></div>'
-    suiv = P.get(h0 + timedelta(hours=1))
-    t_suiv = (f'<div><small>Prochaine heure · {(h0.hour + 1) % 24:02d}h</small><b class="n">{nb(suiv[0])}</b><span>entrées prévues</span></div>'
-              if suiv else '<div><small>Prochaine heure</small><b class="n">—</b><span>pas de prévision</span></div>')
-    futur = {t: v[0] for t, v in P.items() if h0 < t <= h0 + timedelta(hours=24)}
-    if futur:
-        tp = max(futur, key=futur.get)
-        quand = ("aujourd'hui" if tp.date() == J else "demain") + f" {tp:%H}h"
-        t_pic = f'<div><small>Prochain pic</small><b class="n">{nb(futur[tp])}</b><span>{quand}</span></div>'
-    else:
-        t_pic = '<div><small>Prochain pic</small><b class="n">—</b><span>pas de prévision</span></div>'
+        corps, tuiles = _tv_cumul_24h(b, G)
+        sous = "aujourd'hui + 24 h"
+    t_html = "".join(f'<div><small>{esc(l)}</small><b class="n">{v}</b><span>{esc(s)}</span></div>' for l, v, s in tuiles)
     return f"""
-<div class="tvx-carte tvx-cb"><div class="tvx-ct">Réel vs prévision<small>entrées par heure</small>
-    <div class="tvx-lg"><span><u style="border-color:#0B1F55"></u>Réel</span><span><u style="border-color:#1B6EF3;border-top-style:dashed"></u>Prévision</span>
-      <span><u style="border-color:#1B6EF3;opacity:.25;border-top-width:9px"></u>Écart</span></div></div>
-  <div class="tvx-gr"><svg viewBox="0 0 {W} {H}" role="img" aria-label="Entrées réelles et prévues, heure par heure">{svg}</svg></div>
-  <div class="tvx-pv">{t_prec}{t_suiv}{t_pic}</div>
+<div class="tvx-carte tvx-cb"><div class="tvx-ct">Évolution cumulée de la fréquentation<small>{sous}</small></div>
+  <div class="tvx-gr">{corps}</div>
+  <div class="tvx-pv">{t_html}</div>
 </div>"""
 
 
+def _tv_cumul_24h(b: dict, G: list[str]) -> tuple[str, list]:
+    """Hors JOJ : cumul des entrées du jour (réel, heure par heure) puis projection des 24 prochaines heures,
+    comparés au même jour de la semaine un an plus tôt (N-1, 364 jours)."""
+    t_ref, J = b["t_ref"], b["J"]
+    ouv = b["ouv"]
+    h0 = t_ref.replace(minute=0, second=0, microsecond=0)
+    base = minuit(J) + timedelta(hours=ouv)
+    hor = _tv_horaire(b, G)
+    E_now = _somme(b["F"].get("jour", {}), G, "E")
+    # réel : cumul à la fin de chaque heure terminée, puis la valeur à l'instant du dernier lot
+    reel, s = [(0.0, 0.0)], 0.0
+    for h in range(ouv, h0.hour if h0.date() == J else 24):
+        s += hor.get(h, (0.0, 0.0))[0]
+        reel.append((h + 1 - ouv, s))
+    x_now = (t_ref - base).total_seconds() / 3600
+    reel.append((x_now, E_now))
+    # projection : prévisions des 24 heures suivantes (l'heure en cours au prorata de ce qu'il en reste)
+    P = previsions_par_heure(b, G)
+    proj, s, fin_jour, total24 = [(x_now, E_now)], E_now, None, 0.0
+    if P:
+        reste = 1 - (t_ref - h0).total_seconds() / 3600
+        for k in range(0, 25):
+            h = h0 + timedelta(hours=k)
+            v = P.get(h, (0.0,))[0] * (reste if k == 0 else 1)
+            if k == 24:
+                v *= 1 - reste  # 24 h pile après l'instant présent
+            s += v
+            total24 += v
+            proj.append(((h + timedelta(hours=1) - base).total_seconds() / 3600 if k < 24 else x_now + 24, s))
+            if fin_jour is None and (h + timedelta(hours=1)).hour == (b["ferm"] % 24 or 24) % 24 and (h + timedelta(hours=1)).date() == J + timedelta(days=b["ferm"] >= 24):
+                fin_jour = s
+    x_max = x_now + 24 if P else max(x_now, b["ferm"] - ouv)
+    # Année N-1 : même jour de la semaine un an plus tôt (364 jours), cumulé sur la même plage d'heures
+    J1 = J - ALIGN_2025
+    an1 = J1.year
+    n1h: dict = {}
+    try:
+        df1 = d_horaire_historique(b["cle"], minuit(J1), minuit(J1 + timedelta(days=2)))
+        if not df1.empty:
+            d1 = df1[(df1["sens"] == "E") & df1["gare"].isin(list(G))]
+            jour1 = d1["jour"] if "jour" in d1.columns else pd.Series([J1] * len(d1), index=d1.index)
+            for (j, h), v in d1.groupby([jour1, d1["heure"]])["nb"].sum().items():
+                n1h[(pd.Timestamp(j).date(), int(h))] = float(v)
+    except ErreurDonnees as e:
+        JOURNAL.warning("Écran TV : comparaison %s non affichée (%s)", an1, e.titre)
+    n1, s1 = [], 0.0
+    if n1h and sum(n1h.values()) > 0:
+        n1.append((0.0, 0.0))
+        for k in range(0, int(math.ceil(x_max))):
+            hd = base + timedelta(hours=k)
+            s1 += n1h.get((hd.date() - ALIGN_2025, hd.hour), 0.0) * min(1.0, x_max - k)
+            n1.append((min(k + 1.0, x_max), s1))
+    def n1_a(x: float) -> float | None:  # cumul N-1 à l'abscisse x (interpolation linéaire)
+        if not n1:
+            return None
+        for (xa, va), (xb, vb) in zip(n1, n1[1:]):
+            if xa <= x <= xb:
+                return va + (vb - va) * ((x - xa) / (xb - xa) if xb > xa else 0)
+        return n1[-1][1]
+    vmax = max([v for _, v in reel + proj + n1] + [1])
+    pas = graduation(vmax * 1.15, 4)
+    ymax = pas * 4
+    W, H, g0, d0, t0, b0 = 470, 290, 46, 16, 30, 26
+    X = lambda x: g0 + x / x_max * (W - g0 - d0)
+    Y = lambda v: H - b0 - v / ymax * (H - t0 - b0)
+    ligne = lambda ps: " ".join(f"{X(x):.1f},{Y(v):.1f}" for x, v in ps)
+    svg = "".join(f'<line x1="{g0}" x2="{W - d0}" y1="{Y(i * pas):.1f}" y2="{Y(i * pas):.1f}" stroke="#E9EFF7"/>'
+                  f'<text x="{g0 - 7}" y="{Y(i * pas) + 4:.1f}" text-anchor="end">{compact(i * pas) if i else 0}</text>' for i in range(5))
+    for k in range(0, int(x_max) + 1, 6):  # repères toutes les 6 heures ; minuit marqué
+        hd = base + timedelta(hours=k)
+        svg += f'<text x="{X(k):.1f}" y="{H - 6}" text-anchor="middle">{"minuit" if hd.hour == 0 else f"{hd.hour:02d}h"}</text>'
+    xm0 = (minuit(J) + timedelta(days=1) - base).total_seconds() / 3600
+    if 0 < xm0 < x_max:
+        svg += f'<line x1="{X(xm0):.1f}" x2="{X(xm0):.1f}" y1="{t0}" y2="{H - b0}" stroke="#C9D6E8" stroke-dasharray="2 4"/>'
+    if n1:
+        svg += f'<polyline points="{ligne(n1)}" fill="none" stroke="#9AABC6" stroke-width="2.2" stroke-dasharray="5 4"/>'
+        svg += (f'<text x="{X(x_max) - 2:.1f}" y="{Y(n1[-1][1]) + 16:.1f}" text-anchor="end" fill="#7F93B3" font-weight="600" '
+                f'font-size="11.5" stroke="#fff" stroke-width="4" paint-order="stroke">{an1} · {compact(n1[-1][1])}</text>')
+    svg += f'<polygon points="{X(0):.1f},{Y(0):.1f} {ligne(reel)} {X(x_now):.1f},{Y(0):.1f}" fill="{ROUGE}" opacity=".08"/>'
+    svg += f'<polyline points="{ligne(reel)}" fill="none" stroke="{ROUGE}" stroke-width="3" stroke-linejoin="round"/>'
+    if len(proj) > 1:
+        svg += f'<polyline points="{ligne(proj)}" fill="none" stroke="{ROUGE}" stroke-width="2.6" stroke-dasharray="7 5" stroke-linejoin="round"/>'
+    # valeurs écrites en clair (écran TV) : maintenant, fin de service, + 24 h
+    def etiquette(x, v, txt, fond, dy=-16, ancre="middle"):
+        lw = len(txt) * 6.6 + 14
+        bx = {"middle": X(x) - lw / 2, "end": X(x) - lw, "start": X(x)}[ancre]
+        bx = min(max(bx, g0), W - d0 - lw)
+        return (f'<circle cx="{X(x):.1f}" cy="{Y(v):.1f}" r="4.5" fill="{fond}" stroke="#fff" stroke-width="2"/>'
+                f'<rect x="{bx:.1f}" y="{Y(v) + dy - 14:.1f}" width="{lw:.0f}" height="20" rx="5" fill="{fond}"/>'
+                f'<text x="{bx + lw / 2:.1f}" y="{Y(v) + dy:.1f}" text-anchor="middle" fill="#fff" font-size="11.5" font-weight="600">{txt}</text>')
+    svg += (f'<line x1="{X(x_now):.1f}" x2="{X(x_now):.1f}" y1="{t0 - 6}" y2="{H - b0}" stroke="{ROUGE}" stroke-width="1.4"/>'
+            + etiquette(x_now, E_now, f"Maintenant · {compact(E_now)}", ROUGE))
+    if P:
+        svg += etiquette(x_max, proj[-1][1], f"+24 h · {compact(proj[-1][1])}", "#0B1F55", ancre="end")
+    for x, v in reel[1:-1]:
+        hd = base + timedelta(hours=x)
+        svg += survol(X(x), (W - g0 - d0) / x_max / 2, t0, H - b0, W, f"Aujourd'hui {hd.hour:02d}h · cumul",
+                      [(ROUGE, "Réel", nb(v)), ("#9AABC6", str(an1), nb(n1_a(x)) if n1 else None)])
+    for x, v in proj[1:]:
+        hd = base + timedelta(hours=x)
+        svg += survol(X(x), (W - g0 - d0) / x_max / 2, t0, H - b0, W,
+                      f"{'Demain' if hd.date() > J else 'Aujourd’hui'} {hd.hour:02d}h · cumul",
+                      [(ROUGE, "Projeté", nb(v)), ("#9AABC6", str(an1), nb(n1_a(x)) if n1 else None)])
+    svg = (f'<svg class="tb-svg" viewBox="0 0 {W} {H}" font-size="10.5" fill="#4A5F86" font-family="Plus Jakarta Sans, sans-serif" '
+           f'role="img" aria-label="Cumul des entrées du jour et projection sur 24 heures">{svg}</svg>'
+           f'<div class="tb-jl"><span><i style="background:{ROUGE}"></i>Réel du jour</span>'
+           + (f'<span><i style="background:{ROUGE};opacity:.5"></i>Projection (prévisions) en pointillés</span>' if P else "")
+           + (f'<span><i style="background:#9AABC6"></i>Même jour {an1} <em>(même jour de semaine)</em></span>' if n1 else "") + "</div>")
+    def vs1(v, ref):  # « +12 % vs 2025 »
+        if v is None or not ref:
+            return None
+        e = pct(v, ref)
+        return f"{'+' if e > 0 else ('−' if e < 0 else '')}{abs(e)} % vs {an1}"
+    r_now = n1_a(x_now)
+    x_fin = (minuit(J) + timedelta(hours=b["ferm"]) - base).total_seconds() / 3600
+    r_fin = n1_a(min(x_fin, x_max)) if n1 else None
+    r_24 = (n1_a(x_max) - r_now) if n1 and r_now is not None else None
+    tuiles = [("Entrées aujourd'hui", nb(E_now), vs1(E_now, r_now) or f"jusqu'à {hh(t_ref)}"),
+              ("Projection fin de journée", nb(fin_jour) if fin_jour is not None else "—",
+               (vs1(fin_jour, r_fin) or "réel + prévisions") if fin_jour is not None else "pas de prévision"),
+              ("Entrées prévues sur 24 h", nb(total24) if P else "—", (vs1(total24, r_24) or "prévisions") if P else "pas de prévision")]
+    return svg, tuiles
+
+
 def html_tv_retenir(b: dict, G: list[str], a: dict | None) -> str:
-    """Bandeau « À retenir » : jusqu'à 3 faits calculés (hausse JOJ, tronçon le plus chargé, projection, sinon écart 2025 / gare n° 1)."""
+    """Bandeau « À retenir » : jusqu'à 3 faits calculés. Pendant les JOJ : hausse JOJ, tronçon le plus chargé, projection
+    (sinon écart 2025). En dehors : tronçon le plus chargé, 1re gare du jour, heure de pointe."""
     faits = []
-    if a and a.get("hausses") and a["hausses"][0][1] > 0:
+    jeux = bool(a and a["dans_jeux"])  # en dehors des JOJ, aucun fait JOJ
+    if jeux and a.get("hausses") and a["hausses"][0][1] > 0:
         g, p, _ = a["hausses"][0]
         faits.append(("courbe", "#E3F6EE", "#12915F", f'<b class="n up">+{p} %</b>', g, "plus forte hausse (JOJ)"))
     try:  # tronçon le plus chargé : facultatif (pas d'erreur affichée si les horaires GTFS sont indisponibles)
@@ -3038,11 +3109,11 @@ def html_tv_retenir(b: dict, G: list[str], a: dict | None) -> str:
             faits.append(("reseau", "#FDF1E3", "#C2570C", f'<b class="n" style="color:{niveau(p)}">{round(p)} %</b>', nom, "tronçon le plus chargé"))
     except ErreurDonnees as e:
         JOURNAL.warning("Écran TV : tronçon le plus chargé non affiché (%s)", e.titre)
-    if a and a["J"] <= JOJ_FIN and a["E"]["projection"]:
+    if jeux and a["E"]["projection"]:
         E = a["E"]
         vs = f"{'+' if pct(E['projection'], E['normal_total']) > 0 else ''}{pct(E['projection'], E['normal_total'])} % vs période normale" if E["normal_total"] else "entrées sur la période"
         faits.append(("trophee", "#F6E5EA", ROUGE, f'<b class="n">{compact(E["projection"])}</b>', "Projection fin des JOJ", vs))
-    if a and a["E"]["ecart_2025"] is not None and len(faits) < 3:
+    if jeux and a["E"]["ecart_2025"] is not None and len(faits) < 3:
         e = a["E"]["ecart_2025"]
         faits.append(("groupe", "#E3F0FE", "#0A66F0", f'<b class="n {"up" if e >= 0 else "down"}">{"+" if e >= 0 else "−"}{compact(abs(e))}</b>', "Voyageurs vs 2025", "même période, à date"))
     if len(faits) < 3:
@@ -3051,6 +3122,11 @@ def html_tv_retenir(b: dict, G: list[str], a: dict | None) -> str:
         if vals and max(vals.values()) > 0:
             g = max(vals, key=vals.get)
             faits.append(("epingle", "#F6E5EA", ROUGE, f'<b class="n">{nb(vals[g])}</b>', g, "1re gare du jour (entrées)"))
+    if len(faits) < 3:  # heure de pointe du jour (entrées)
+        hor = _tv_horaire(b, G)
+        if hor and max(v[0] for v in hor.values()) > 0:
+            hp = max(hor, key=lambda h: hor[h][0])
+            faits.append(("horloge", "#E3F0FE", "#0A66F0", f'<b class="n">{nb(hor[hp][0])}</b>', f"Pointe à {hp:02d}h", "entrées sur l'heure"))
     if not faits:
         faits.append(("info", "#EEF2F8", "#4A5F86", '<b class="n">—</b>', "Pas encore de fait marquant", "en attente de validations"))
     return ('<div class="tvx-carte tvx-r">' + VAGUE_BAS + '<div class="tvx-et"><small>› À RETENIR</small><b>Faits du jour</b></div>' + "".join(
@@ -3281,7 +3357,7 @@ def page_tv():
             JOURNAL.warning("Écran TV : analyses JOJ non affichées (%s)", e.titre)
     md('<div class="tvx-w"><div class="tvx">' + html_tv_entete(b["now"], etat_donnees(b)) + '<div class="tvx-p">'
        + html_tv_kpis(b, G, a)
-       + f'<div class="tvx-m">{sur(html_tv_gares, b, G)}{html_tv_cumul(b, G)}{sur(html_tv_prevision, b, G)}</div>'
+       + f'<div class="tvx-m">{sur(html_tv_gares, b, G)}{html_tv_cumul(b, G)}{sur(html_tv_evolution, b, G, a)}</div>'
        + html_tv_retenir(b, G, a) + "</div></div></div>")
 
 
